@@ -31,7 +31,7 @@ const loadTheme = () => {
   try { return localStorage.getItem(THEME_KEY) || "light"; } catch { return "light"; }
 };
 
-// ── Custom Calendar Component ─────────────────────────────────────
+// ── Custom Calendar ───────────────────────────────────────────────
 function Calendar({ value, onChange, maxDate, dark }) {
   const init = value ? parseLocal(value) : new Date();
   const [view, setView] = useState({ y: init.getFullYear(), m: init.getMonth() });
@@ -61,9 +61,7 @@ function Calendar({ value, onChange, maxDate, dark }) {
     selected.getFullYear() === view.y &&
     selected.getMonth() === view.m &&
     selected.getDate() === d;
-
   const isDisabled = (d) => max && new Date(view.y, view.m, d) > max;
-
   const isToday = (d) => {
     const t = new Date();
     return t.getFullYear() === view.y && t.getMonth() === view.m && t.getDate() === d;
@@ -84,42 +82,34 @@ function Calendar({ value, onChange, maxDate, dark }) {
 
   return (
     <div style={{ background: c.bg, border: `1px solid ${c.border}`, width: "100%", userSelect: "none" }}>
-      {/* Month nav */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: c.headerBg, borderBottom: `1px solid ${c.border}` }}>
         <button onClick={prev} style={{ background: "none", border: "none", color: c.muted, cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "0 2px", fontFamily: "inherit", transition: "color 0.12s" }}
           onMouseEnter={e => e.target.style.color = c.text} onMouseLeave={e => e.target.style.color = c.muted}>‹</button>
         <span style={{ fontFamily: "'Geist Mono', monospace", fontSize: "10px", letterSpacing: "0.12em", textTransform: "uppercase", color: c.text }}>
-          {MONTHS[view.m].slice(0,3)} {view.y}
+          {MONTHS[view.m].slice(0, 3)} {view.y}
         </span>
         <button onClick={next} style={{ background: "none", border: "none", color: c.muted, cursor: "pointer", fontSize: 18, lineHeight: 1, padding: "0 2px", fontFamily: "inherit", transition: "color 0.12s" }}
           onMouseEnter={e => e.target.style.color = c.text} onMouseLeave={e => e.target.style.color = c.muted}>›</button>
       </div>
-
-      {/* Day labels */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", padding: "8px 10px 4px" }}>
         {DAYS_SHORT.map(d => (
           <div key={d} style={{ textAlign: "center", fontFamily: "'Geist Mono', monospace", fontSize: "9px", letterSpacing: "0.06em", color: c.muted, paddingBottom: 3 }}>{d}</div>
         ))}
       </div>
-
-      {/* Date cells */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", padding: "0 10px 10px", gap: 1 }}>
         {cells.map((d, i) => {
           const sel = d && isSelected(d);
           const dis = d && isDisabled(d);
           const tod = d && isToday(d);
           return (
-            <div key={i}
-              onClick={() => !dis && pick(d)}
-              style={{
-                textAlign: "center", padding: "6px 0",
-                fontFamily: "'Geist Mono', monospace", fontSize: "11px",
-                cursor: d && !dis ? "pointer" : "default",
-                color: !d ? "transparent" : dis ? c.disabledTx : sel ? c.selTx : c.text,
-                background: sel ? c.selBg : "transparent",
-                position: "relative",
-                transition: "background 0.1s, color 0.1s",
-              }}
+            <div key={i} onClick={() => !dis && pick(d)} style={{
+              textAlign: "center", padding: "6px 0",
+              fontFamily: "'Geist Mono', monospace", fontSize: "11px",
+              cursor: d && !dis ? "pointer" : "default",
+              color: !d ? "transparent" : dis ? c.disabledTx : sel ? c.selTx : c.text,
+              background: sel ? c.selBg : "transparent",
+              position: "relative", transition: "background 0.1s, color 0.1s",
+            }}
               onMouseEnter={e => { if (d && !dis && !sel) e.currentTarget.style.background = c.hoverBg; }}
               onMouseLeave={e => { if (!sel) e.currentTarget.style.background = "transparent"; }}
             >
@@ -136,7 +126,7 @@ function Calendar({ value, onChange, maxDate, dark }) {
 }
 
 // ── Popover Calendar Field ────────────────────────────────────────
-function CalendarField({ value, onChange, maxDate, dark, label }) {
+function CalendarField({ value, onChange, maxDate, dark, label, compact }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
 
@@ -156,24 +146,23 @@ function CalendarField({ value, onChange, maxDate, dark, label }) {
 
   return (
     <div ref={ref} style={{ position: "relative" }}>
-      {label && (
+      {label && !compact && (
         <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.label, marginBottom: 6, fontFamily: "'Geist Mono', monospace" }}>{label}</div>
       )}
-      <button
-        onClick={() => setOpen(o => !o)}
-        style={{
-          background: "transparent", border: "none",
-          borderBottom: `1px solid ${open ? c.text : c.border}`,
-          borderRadius: 0, width: "100%", textAlign: "left",
-          padding: "6px 0", fontFamily: "'Geist Mono', monospace",
-          fontSize: 13, color: value ? c.text : c.muted,
-          cursor: "pointer", transition: "border-color 0.15s",
-        }}
-      >
+      <button onClick={() => setOpen(o => !o)} style={{
+        background: "transparent", border: "none",
+        borderBottom: `1px solid ${open ? c.text : c.border}`,
+        borderRadius: 0, width: "100%", textAlign: "left",
+        padding: compact ? "3px 0" : "6px 0",
+        fontFamily: "'Geist Mono', monospace",
+        fontSize: compact ? 12 : 13,
+        color: value ? c.text : c.muted,
+        cursor: "pointer", transition: "border-color 0.15s",
+      }}>
         {value ? fmtDate(value) : "Select date"}
       </button>
       {open && (
-        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 200, width: 254, boxShadow: c.shadow }}>
+        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 300, width: 254, boxShadow: c.shadow }}>
           <Calendar value={value} onChange={v => { onChange(v); setOpen(false); }} maxDate={maxDate} dark={dark} />
         </div>
       )}
@@ -181,7 +170,7 @@ function CalendarField({ value, onChange, maxDate, dark, label }) {
   );
 }
 
-// ── Quick chip ────────────────────────────────────────────────────
+// ── Chip ──────────────────────────────────────────────────────────
 function Chip({ label, active, onClick, dark }) {
   const c = {
     border: dark ? "#2a2a2a" : "#e0ddd7",
@@ -206,7 +195,99 @@ function Chip({ label, active, onClick, dark }) {
   );
 }
 
-// ── App ───────────────────────────────────────────────────────────
+// ── Inline Edit Row ───────────────────────────────────────────────
+function EditRow({ entry, onSave, onCancel, dark }) {
+  const [eDate, setEDate] = useState(entry.date);
+  const [eHrs, setEHrs] = useState(String(entry.h));
+  const [eErr, setEErr] = useState("");
+
+  const c = {
+    text: dark ? "#d8d5cf" : "#111111",
+    muted: dark ? "#4a4a4a" : "#9c9890",
+    sub: dark ? "#555" : "#b0ada6",
+    faint: dark ? "#1e1e1e" : "#e0ddd7",
+    inputBorder: dark ? "#2a2a2a" : "#d0cfc9",
+    btnBg: dark ? "#d8d5cf" : "#111111",
+    btnTx: dark ? "#111111" : "#f7f6f3",
+    rowBg: dark ? "#141414" : "#faf9f7",
+    accentBorder: dark ? "#333" : "#c8c5be",
+  };
+
+  const save = () => {
+    const h = parseFloat(eHrs);
+    if (!eDate) return setEErr("Date required.");
+    if (!eHrs || isNaN(h) || h <= 0 || h > 24) return setEErr("Hours must be 0.5–24.");
+    onSave({ ...entry, date: eDate, h });
+  };
+
+  const inputStyle = {
+    background: "transparent", border: "none",
+    borderBottom: `1px solid ${c.inputBorder}`,
+    outline: "none", fontFamily: "'Geist Mono', monospace",
+    fontSize: 12, color: c.text, padding: "3px 0", width: "100%",
+    transition: "border-color 0.15s",
+  };
+
+  return (
+    <div style={{
+      padding: "14px 14px 12px",
+      background: c.rowBg,
+      borderBottom: `1px solid ${c.faint}`,
+      borderLeft: `2px solid ${c.accentBorder}`,
+    }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 12 }}>
+        {/* Date */}
+        <div>
+          <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 5, fontFamily: "'Geist Mono', monospace" }}>Date</div>
+          <CalendarField value={eDate} onChange={setEDate} maxDate={todayStr()} dark={dark} compact />
+        </div>
+        {/* Hours */}
+        <div>
+          <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 5, fontFamily: "'Geist Mono', monospace" }}>Hours</div>
+          <input
+            type="number" value={eHrs} min="0.5" max="24" step="0.5"
+            style={inputStyle}
+            onChange={e => setEHrs(e.target.value)}
+            onFocus={e => e.target.style.borderColor = c.text}
+            onBlur={e => e.target.style.borderColor = c.inputBorder}
+            onKeyDown={e => { if (e.key === "Enter") save(); if (e.key === "Escape") onCancel(); }}
+          />
+          <div style={{ display: "flex", gap: 5, marginTop: 8, flexWrap: "wrap" }}>
+            {[4, 6, 7, 8, 9].map(h => (
+              <Chip key={h} label={`${h}h`} active={eHrs === String(h)} onClick={() => setEHrs(String(h))} dark={dark} />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {eErr && <div style={{ fontSize: 10, color: c.muted, marginBottom: 10, letterSpacing: "0.04em" }}>{eErr}</div>}
+
+      {/* Action buttons */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <button onClick={save} style={{
+          background: c.btnBg, color: c.btnTx, border: "none",
+          padding: "7px 18px", fontSize: 10, letterSpacing: "0.1em",
+          textTransform: "uppercase", fontFamily: "'Geist Mono', monospace",
+          cursor: "pointer", transition: "opacity 0.15s",
+        }}
+          onMouseEnter={e => e.currentTarget.style.opacity = "0.75"}
+          onMouseLeave={e => e.currentTarget.style.opacity = "1"}
+        >Save</button>
+        <button onClick={onCancel} style={{
+          background: "none", border: "none", padding: "7px 0",
+          fontSize: 10, letterSpacing: "0.08em", textTransform: "uppercase",
+          color: c.sub, fontFamily: "'Geist Mono', monospace", cursor: "pointer",
+          transition: "color 0.15s",
+        }}
+          onMouseEnter={e => e.target.style.color = c.text}
+          onMouseLeave={e => e.target.style.color = c.sub}
+        >Cancel</button>
+      </div>
+    </div>
+  );
+}
+
+// ── Main App ──────────────────────────────────────────────────────
 export default function OjtMinimal() {
   const [entries, setEntries] = useState(loadEntries);
   const [theme, setTheme] = useState(loadTheme);
@@ -226,6 +307,9 @@ export default function OjtMinimal() {
   const [bSkip, setBSkip] = useState(true);
   const [bErr, setBErr] = useState("");
   const [bFlash, setBFlash] = useState(false);
+
+  // editing: id of the entry being edited (one at a time)
+  const [editingId, setEditingId] = useState(null);
 
   useEffect(() => {
     try { localStorage.setItem(KEY, JSON.stringify(entries)); } catch {}
@@ -256,7 +340,16 @@ export default function OjtMinimal() {
 
   const remove = (id) => {
     setRemoving(id);
-    setTimeout(() => { setEntries(p => p.filter(e => e.id !== id)); setRemoving(null); }, 260);
+    setTimeout(() => {
+      setEntries(p => p.filter(e => e.id !== id));
+      setRemoving(null);
+      if (editingId === id) setEditingId(null);
+    }, 260);
+  };
+
+  const saveEdit = (updated) => {
+    setEntries(p => p.map(e => e.id === updated.id ? updated : e));
+    setEditingId(null);
   };
 
   const getBulkDates = useCallback(() => {
@@ -289,7 +382,6 @@ export default function OjtMinimal() {
 
   const sorted = [...entries].sort((a, b) => b.date.localeCompare(a.date));
 
-  // Color tokens
   const c = {
     text: dark ? "#d8d5cf" : "#111111",
     muted: dark ? "#4a4a4a" : "#9c9890",
@@ -322,11 +414,32 @@ export default function OjtMinimal() {
         input[type="number"] { -webkit-appearance: none; appearance: none; }
         input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; }
         input::placeholder { color: ${c.sub}; }
-        .log-item { display: flex; align-items: baseline; justify-content: space-between; padding: 14px 0; border-bottom: 1px solid ${c.faint}; transition: opacity 0.26s; }
+
+        .log-item {
+          display: flex; align-items: center; justify-content: space-between;
+          padding: 13px 0; border-bottom: 1px solid ${c.faint};
+          transition: opacity 0.26s;
+        }
         .log-item.out { opacity: 0; }
-        .remove-btn { background: none; border: none; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: ${c.sub}; margin-left: 20px; padding: 0; transition: color 0.15s; flex-shrink: 0; }
-        .remove-btn:hover { color: ${c.text}; }
-        @media (max-width: 500px) { .wrap { padding: 48px 20px 80px !important; } .hero-n { font-size: 80px !important; } .two-col { grid-template-columns: 1fr !important; } }
+
+        .log-actions {
+          display: flex; align-items: center; gap: 12px; flex-shrink: 0; margin-left: 16px;
+        }
+        .action-btn {
+          background: none; border: none; padding: 0;
+          font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+          color: ${c.sub}; transition: color 0.15s; white-space: nowrap;
+        }
+        .action-btn:hover { color: ${c.text}; }
+        .action-btn.danger:hover { color: ${dark ? "#cc6666" : "#c0392b"}; }
+
+        .log-sep { width: 1px; height: 10px; background: ${c.faint}; flex-shrink: 0; }
+
+        @media (max-width: 500px) {
+          .wrap { padding: 48px 20px 80px !important; }
+          .hero-n { font-size: 80px !important; }
+          .two-col { grid-template-columns: 1fr !important; }
+        }
       `}</style>
 
       <div className="wrap" style={{ maxWidth: 560, margin: "0 auto", padding: "72px 32px 120px" }}>
@@ -344,7 +457,7 @@ export default function OjtMinimal() {
           >{dark ? "Light" : "Dark"}</button>
         </div>
 
-        {/* Hero number */}
+        {/* Hero */}
         <div style={{ marginBottom: 60 }}>
           <div className="hero-n" style={{ fontFamily: "'Instrument Serif', serif", fontSize: "clamp(80px,18vw,120px)", fontWeight: 400, lineHeight: 0.88, letterSpacing: "-0.02em", color: c.text, fontVariantNumeric: "tabular-nums" }}>
             {n(total)}
@@ -354,7 +467,7 @@ export default function OjtMinimal() {
           </div>
         </div>
 
-        {/* Progress bar + stats */}
+        {/* Progress */}
         <div style={{ marginBottom: 60 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
             <span style={{ fontSize: 11, letterSpacing: "0.08em", color: c.muted }}>{pct.toFixed(1)}%</span>
@@ -391,13 +504,10 @@ export default function OjtMinimal() {
             }}
               onMouseEnter={e => e.target.style.color = c.text}
               onMouseLeave={e => e.target.style.color = c.sub}
-            >
-              {bulkOpen ? "Single entry" : "Bulk add"}
-            </button>
+            >{bulkOpen ? "Single entry" : "Bulk add"}</button>
           </div>
 
           {!bulkOpen ? (
-            /* Single entry */
             <>
               <div className="two-col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, marginBottom: 20 }}>
                 <CalendarField value={date} onChange={setDate} maxDate={todayStr()} dark={dark} label="Date" />
@@ -428,19 +538,14 @@ export default function OjtMinimal() {
               {err && <div style={{ fontSize: 11, color: c.muted, marginTop: 12, letterSpacing: "0.04em" }}>{err}</div>}
             </>
           ) : (
-            /* Bulk entry panel */
             <div style={{ background: c.panelBg, border: `1px solid ${c.panelBorder}`, padding: "20px 18px" }}>
               <div style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: c.sub, marginBottom: 18 }}>
                 Add a range of past dates at once
               </div>
-
-              {/* Date range */}
               <div className="two-col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
                 <CalendarField value={bStart} onChange={v => { setBStart(v); if (bEnd && parseLocal(v) > parseLocal(bEnd)) setBEnd(""); }} maxDate={todayStr()} dark={dark} label="Start date" />
                 <CalendarField value={bEnd} onChange={v => { if (!bStart || parseLocal(v) >= parseLocal(bStart)) { setBEnd(v); setBErr(""); } else setBErr("End must be after start."); }} maxDate={todayStr()} dark={dark} label="End date" />
               </div>
-
-              {/* Hours per day */}
               <div style={{ marginBottom: 16 }}>
                 <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 6, fontFamily: "'Geist Mono', monospace" }}>Hours per day</div>
                 <input type="number" placeholder="8" value={bHrs} min="0.5" max="24" step="0.5"
@@ -454,14 +559,10 @@ export default function OjtMinimal() {
                   ))}
                 </div>
               </div>
-
-              {/* Skip weekends toggle */}
               <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 11, color: c.sub, letterSpacing: "0.06em", userSelect: "none", marginBottom: 20 }}>
-                <input type="checkbox" checked={bSkip} onChange={e => setBSkip(e.target.checked)} style={{ accentColor: c.text, width: 13, height: 13, cursor: "pointer" }} />
+                <input type="checkbox" checked={bSkip} onChange={e => setBSkip(e.target.checked)} style={{ accentColor: c.text, width: 13, height: 13 }} />
                 Skip weekends
               </label>
-
-              {/* Preview */}
               {bStart && bEnd && bulkH > 0 && bulkDates.length > 0 && (
                 <div style={{ background: c.previewBg, padding: "12px 14px", marginBottom: 14, borderTop: `1px solid ${c.faint}` }}>
                   {[["Days", bulkDates.length], ["Hours to add", n(bulkTotal)], ["New total", n(Math.min(GOAL, total + bulkTotal))]].map(([lbl, val]) => (
@@ -472,11 +573,10 @@ export default function OjtMinimal() {
                   ))}
                 </div>
               )}
-
               <button onClick={commitBulk} style={{
                 background: bFlash ? (dark ? "#888" : "#555") : c.btnBg,
-                color: c.btnTx, border: "none", padding: "10px 0",
-                width: "100%", fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase",
+                color: c.btnTx, border: "none", padding: "10px 0", width: "100%",
+                fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase",
                 transition: "opacity 0.15s, background 0.2s",
               }}
                 onMouseEnter={e => !bFlash && (e.currentTarget.style.opacity = "0.75")}
@@ -503,17 +603,35 @@ export default function OjtMinimal() {
               </span>
             )}
           </div>
+
           {sorted.length === 0 ? (
             <div style={{ fontSize: 12, color: dark ? "#2e2e2e" : "#c8c5be", letterSpacing: "0.04em", padding: "20px 0" }}>No entries recorded.</div>
-          ) : sorted.map(e => (
-            <div key={e.id} className={`log-item${removing === e.id ? " out" : ""}`}>
-              <span style={{ fontSize: 13, color: c.text, flex: 1 }}>{fmtDate(e.date)}</span>
-              <span style={{ fontFamily: "'Instrument Serif', serif", fontSize: 20, color: c.text, marginLeft: 16, fontVariantNumeric: "tabular-nums" }}>
-                {n(e.h)}<span style={{ fontSize: 10, color: c.sub, letterSpacing: "0.06em", marginLeft: 3 }}>hr</span>
-              </span>
-              <button className="remove-btn" onClick={() => remove(e.id)}>Remove</button>
-            </div>
-          ))}
+          ) : (
+            sorted.map(e => (
+              <div key={e.id}>
+                {editingId === e.id ? (
+                  <EditRow
+                    entry={e}
+                    onSave={saveEdit}
+                    onCancel={() => setEditingId(null)}
+                    dark={dark}
+                  />
+                ) : (
+                  <div className={`log-item${removing === e.id ? " out" : ""}`}>
+                    <span style={{ fontSize: 13, color: c.text, flex: 1, minWidth: 0 }}>{fmtDate(e.date)}</span>
+                    <span style={{ fontFamily: "'Instrument Serif', serif", fontSize: 20, color: c.text, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
+                      {n(e.h)}<span style={{ fontSize: 10, color: c.sub, letterSpacing: "0.06em", marginLeft: 3 }}>hr</span>
+                    </span>
+                    <div className="log-actions">
+                      <button className="action-btn" onClick={() => setEditingId(e.id)}>Edit</button>
+                      <div className="log-sep" />
+                      <button className="action-btn danger" onClick={() => remove(e.id)}>Delete</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))
+          )}
         </div>
 
       </div>
