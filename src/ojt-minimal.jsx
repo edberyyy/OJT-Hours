@@ -402,14 +402,10 @@ function DuplicateDateModal({ title, message, onClose, dark }) {
   };
 
   return (
-    <div
-      style={{ position: "fixed", inset: 0, background: c.overlay, zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
-      onClick={onClose}
-    >
-      <div
-        style={{ background: c.bg, border: `1px solid ${c.border}`, padding: "28px 24px", maxWidth: 340, width: "100%", boxShadow: dark ? "0 24px 60px rgba(0,0,0,0.8)" : "0 24px 60px rgba(0,0,0,0.15)" }}
-        onClick={e => e.stopPropagation()}
-      >
+    <div style={{ position: "fixed", inset: 0, background: c.overlay, zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
+      onClick={onClose}>
+      <div style={{ background: c.bg, border: `1px solid ${c.border}`, padding: "28px 24px", maxWidth: 340, width: "100%", boxShadow: dark ? "0 24px 60px rgba(0,0,0,0.8)" : "0 24px 60px rgba(0,0,0,0.15)" }}
+        onClick={e => e.stopPropagation()}>
         <div style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: c.sub, marginBottom: 16, fontFamily: "'Geist Mono',monospace" }}>Notice</div>
         <div style={{ fontFamily: "'Instrument Serif',serif", fontSize: 22, color: c.text, lineHeight: 1.2, marginBottom: 8 }}>
           {title}
@@ -418,9 +414,12 @@ function DuplicateDateModal({ title, message, onClose, dark }) {
           {message}
         </div>
         <div style={{ height: 1, background: c.faint, marginBottom: 20 }} />
-        <button
-          onClick={onClose}
-          style={{ width: "100%", background: c.btnBg, color: c.btnTx, border: "none", padding: "9px 0", fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", fontFamily: "'Geist Mono',monospace", cursor: "pointer", transition: "opacity 0.15s" }}
+        <button onClick={onClose} style={{
+          width: "100%", background: c.btnBg, color: c.btnTx,
+          border: "none", padding: "9px 0",
+          fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase",
+          fontFamily: "'Geist Mono',monospace", cursor: "pointer", transition: "opacity 0.15s",
+        }}
           onMouseEnter={e => e.currentTarget.style.opacity = "0.75"}
           onMouseLeave={e => e.currentTarget.style.opacity = "1"}
         >OK</button>
@@ -506,7 +505,7 @@ function EditRow({ entry, onSave, onCancel, dark, isDateTaken, onDuplicate }) {
         <div style={{ border: `1px solid ${c.faint}`, padding: "12px 12px", marginBottom: 14 }}>
           <div style={{ fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: c.muted, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>Notice</div>
           <div style={{ fontSize: 11, color: c.sub, fontFamily: "'Geist Mono',monospace", letterSpacing: "0.02em", lineHeight: 1.4 }}>
-            This date is already used in History. Saving will create a duplicate entry. Consider editing the existing entry instead, or delete it then add a new one.
+            This date is already used in History. You can't save a duplicate date. Edit the existing entry instead, or delete it then add a new one.
           </div>
         </div>
       )}
@@ -593,7 +592,7 @@ export default function OjtMinimal() {
   const [editingId, setEditingId] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null); // entry object
   const [removing, setRemoving] = useState(null);
-  const [dupNotice, setDupNotice] = useState(null); // { title, message }
+  const [dupNotice, setDupNotice] = useState(null); // { title: string, message: string }
 
   useEffect(() => { try { localStorage.setItem(KEY, JSON.stringify(entries)); } catch {} }, [entries]);
   useEffect(() => {
@@ -618,17 +617,18 @@ export default function OjtMinimal() {
   const bDerivedH = bMode === "time" ? calcHoursFromTimes(bTimeIn, bTimeOut) : 0;
 
   const openDupModal = useCallback((d, mode) => {
-    const pretty = d ? `${fmtDate(d)} (${fmtWeekday(d)})` : "";
     if (mode === "bulk") {
       setDupNotice({
         title: "Duplicate dates",
-        message: "Some dates in this range already exist in History. Bulk add is blocked to prevent duplicates. Please edit the existing entries, or delete them first then add again.",
+        message: "Some dates in this range already exist in History. You can't add duplicates. Edit the existing entries, or delete them first then add again.",
       });
       return;
     }
+
+    const pretty = d ? `${fmtDate(d)} (${fmtWeekday(d)})` : "This date";
     setDupNotice({
       title: "Date already exists",
-      message: `${pretty} is already used in History. You can't add another entry for the same date. Please edit the existing entry, or delete it then add a new one.`,
+      message: `${pretty} is already in History. You can't add another entry for the same date. Please edit the existing entry, or delete it then add a new one.`,
     });
   }, []);
 
@@ -869,7 +869,7 @@ export default function OjtMinimal() {
                 <div style={{ border: `1px solid ${c.faint}`, padding: "12px 14px", marginBottom: 20 }}>
                   <div style={{ fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: c.muted, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>Notice</div>
                   <div style={{ fontSize: 11, color: c.sub, fontFamily: "'Geist Mono',monospace", letterSpacing: "0.02em", lineHeight: 1.4 }}>
-                    This date is already used in History. Adding will create a duplicate entry. Consider editing the existing entry instead, or delete it then add a new one.
+                    This date is already used in History. You can't add a duplicate date. Edit the existing entry instead, or delete it then add a new one.
                   </div>
                 </div>
               )}
@@ -928,7 +928,7 @@ export default function OjtMinimal() {
                 <div style={{ border: `1px solid ${c.faint}`, padding: "12px 14px", marginBottom: 16, background: c.previewBg }}>
                   <div style={{ fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: c.muted, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>Notice</div>
                   <div style={{ fontSize: 11, color: c.sub, fontFamily: "'Geist Mono',monospace", letterSpacing: "0.02em", lineHeight: 1.4 }}>
-                    {bulkDupCount} date{bulkDupCount === 1 ? " is" : "s are"} already used in History for this range. Bulk add will create duplicates. Consider editing the existing entries instead, or delete them then add again.
+                    {bulkDupCount} date{bulkDupCount === 1 ? " is" : "s are"} already used in History for this range. You can't bulk add duplicates. Edit the existing entries instead, or delete them then add again.
                   </div>
                 </div>
               )}
