@@ -57,63 +57,37 @@ const calcHoursFromTimes = (tin, tout) => {
   if (end <= start) end += 24 * 60;
 
   const totalMinutes = end - start;
-  if (totalMinutes <= 0) return 0;
-
-  // Base shift + overtime rules:
-  // - Base shift window: 08:00–17:00 (but when OT happens, this window is credited as max 8 hours)
-  // - Overtime window: 17:00–20:00
-  //   - If the full OT window is worked (5pm–8pm), OT is credited as a flat 8 hours
-  //   - Otherwise, OT minutes are credited at 2x
-  const BASE_START = 8 * 60;
-  const BASE_END = 17 * 60;
-  const BASE_CREDIT = 8 * 60;
-  const OT_START = 17 * 60;
-  const OT_END = 20 * 60;
-  const OT_WINDOW = OT_END - OT_START;
-
-  const overlap = (aStart, aEnd, bStart, bEnd) => {
-    const s = Math.max(aStart, bStart);
-    const e = Math.min(aEnd, bEnd);
-    return Math.max(0, e - s);
-  };
-
-  let baseWindowMinutes = 0;
-  let overtimeMinutes = 0;
-  const lastDay = Math.floor((end - 1) / (24 * 60));
-  for (let day = 0; day <= lastDay; day++) {
-    const offset = day * 24 * 60;
-    baseWindowMinutes += overlap(start, end, BASE_START + offset, BASE_END + offset);
-    overtimeMinutes += overlap(start, end, OT_START + offset, OT_END + offset);
-  }
-
-  const LUNCH_DEDUCT = 60;
-
-  let creditedMinutes = 0;
-
-  // If there's no OT (out before 5pm), keep the original behavior (no 2x, no base-shift adjustment).
-  if (overtimeMinutes <= 0) {
-    creditedMinutes = totalMinutes;
-  } else {
-    // OT exists: credit the base shift window as up to 8 hours,
-    // and credit OT window minutes at 2x (or flat 8 hours if the full 5–8pm window is worked).
-    const baseCreditedMinutes = Math.min(BASE_CREDIT, baseWindowMinutes);
-    const otherMinutes = Math.max(0, totalMinutes - baseWindowMinutes - overtimeMinutes);
-
-    let overtimeCreditedMinutes = 0;
-    for (let day = 0; day <= lastDay; day++) {
-      const offset = day * 24 * 60;
-      const ot = overlap(start, end, OT_START + offset, OT_END + offset);
-      if (ot <= 0) continue;
-      overtimeCreditedMinutes += ot >= OT_WINDOW ? BASE_CREDIT : ot * 2;
-    }
-
-    creditedMinutes = baseCreditedMinutes + otherMinutes + overtimeCreditedMinutes;
-  }
-
-  // Lunch break: always deduct 1 hour from credited time.
-  creditedMinutes = Math.max(0, creditedMinutes - LUNCH_DEDUCT);
-  return minutesToHours(creditedMinutes);
+  return totalMinutes > 0 ? minutesToHours(totalMinutes) : 0;
 };
+
+const normalizeEntry = (entry) => {
+  const hasAnyNewField = entry.hReg != null || entry.hOT != null || entry.hMinus != null;
+
+  const legacyH = typeof entry.h === "number" ? entry.h : (parseFloat(entry.h) || 0);
+  const reg = entry.hReg != null
+    ? (typeof entry.hReg === "number" ? entry.hReg : (parseFloat(entry.hReg) || 0))
+    : (hasAnyNewField ? 0 : legacyH);
+
+  let ot = entry.hOT != null
+    ? (typeof entry.hOT === "number" ? entry.hOT : (parseFloat(entry.hOT) || 0))
+    : 0;
+
+  let minus = entry.hMinus != null
+    ? (typeof entry.hMinus === "number" ? entry.hMinus : (parseFloat(entry.hMinus) || 0))
+    : 0;
+
+  // Backward compat: a previous iteration stored deductions as negative OT.
+  // Convert negative OT into minus hours when `hMinus` isn't set.
+  if (minus === 0 && ot < 0) {
+    minus = -ot;
+    ot = 0;
+  }
+
+  const total = Math.max(0, (reg + ot) - minus);
+  return { hReg: reg, hOT: ot, hMinus: minus, total };
+};
+
+const entryTotal = (entry) => normalizeEntry(entry).total;
 
 // ── Storage ──────────────────────────────────────────────────────
 const loadEntries = () => {
@@ -361,7 +335,10 @@ function DeleteModal({ entry, onConfirm, onCancel, dark }) {
             : null}
         </div>
         <div style={{ fontFamily: "'Geist Mono',monospace", fontSize: 12, color: c.sub, marginBottom: 24 }}>
-          {(() => { const h = entry.h; return `${h % 1 === 0 ? h : h.toFixed(2)} hr${h === 1 ? "" : "s"} will be deducted`; })()}
+          {(() => {
+            const h = entryTotal(entry);
+            return `${h % 1 === 0 ? h : h.toFixed(2)} hr${h === 1 ? "" : "s"} will be deducted`;
+          })()}
         </div>
         <div style={{ height: 1, background: c.faint, marginBottom: 20 }} />
         <div style={{ display: "flex", gap: 10 }}>
@@ -430,14 +407,20 @@ function DuplicateDateModal({ title, message, onClose, dark }) {
 
 // ── Inline Edit Row ──────────────────────────────────────────────
 function EditRow({ entry, onSave, onCancel, dark, isDateTaken, onDuplicate }) {
+  const init = normalizeEntry(entry);
   const [eDate, setEDate] = useState(entry.date);
   const [mode, setMode] = useState(entry.timeIn ? "time" : "manual");
-  const [eHrs, setEHrs] = useState(String(entry.h));
+  const [eReg, setEReg] = useState(String(init.hReg || ""));
+  const [eOT, setEOT] = useState(String(init.hOT || ""));
+  const [eMinus, setEMinus] = useState(String(init.hMinus || "0"));
   const [eIn, setEIn] = useState(entry.timeIn || defaultTimeIn());
   const [eOut, setEOut] = useState(entry.timeOut || defaultTimeOut());
   const [eErr, setEErr] = useState("");
 
-  const derivedH = mode === "time" ? calcHoursFromTimes(eIn, eOut) : parseFloat(eHrs) || 0;
+  const regH = mode === "time" ? calcHoursFromTimes(eIn, eOut) : (parseFloat(eReg) || 0);
+  const otH = parseFloat(eOT) || 0;
+  const minusH = parseFloat(eMinus) || 0;
+  const derivedH = Math.max(0, (regH + otH) - minusH);
   const dateTaken = Boolean(isDateTaken && isDateTaken(eDate, entry.id));
 
   const c = {
@@ -470,14 +453,23 @@ function EditRow({ entry, onSave, onCancel, dark, isDateTaken, onDuplicate }) {
       onDuplicate?.(eDate);
       return;
     }
-    if (mode === "manual") {
-      const h = parseFloat(eHrs);
-      if (!eHrs || isNaN(h) || h <= 0 || h > 24) return setEErr("Hours must be 0.5–24.");
-      onSave({ ...entry, date: eDate, h, timeIn: null, timeOut: null });
-    } else {
-      if (derivedH <= 0) return setEErr("Time out must be after time in.");
-      onSave({ ...entry, date: eDate, h: derivedH, timeIn: eIn, timeOut: eOut });
-    }
+    if (regH < 0 || regH > 24) return setEErr("Hours must be 0–24.");
+    if (otH < 0 || otH > 24) return setEErr("OT hours must be 0–24.");
+    if (minusH < 0 || minusH > 24) return setEErr("Minus hours must be 0–24.");
+    if ((regH + otH) <= 0) return setEErr("Enter hours to log.");
+    if (derivedH <= 0) return setEErr("Total after minus must be greater than 0.");
+    if (derivedH > 24) return setEErr("Total hours cannot exceed 24.");
+    if (mode === "time" && regH <= 0) return setEErr("Time out must be after time in.");
+
+    onSave({
+      ...entry,
+      date: eDate,
+      hReg: regH,
+      hOT: otH,
+      hMinus: minusH,
+      timeIn: mode === "time" ? eIn : null,
+      timeOut: mode === "time" ? eOut : null,
+    });
   };
 
   return (
@@ -513,26 +505,69 @@ function EditRow({ entry, onSave, onCancel, dark, isDateTaken, onDuplicate }) {
       {mode === "manual" ? (
         <div style={{ marginBottom: 14 }}>
           <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 5, fontFamily: "'Geist Mono',monospace" }}>Hours</div>
-          <input type="number" value={eHrs} min="0.5" max="24" step="0.5" style={inputStyle}
-            onChange={e => setEHrs(e.target.value)}
+          <input type="number" value={eReg} min="0" max="24" step="0.5" style={inputStyle}
+            onChange={e => setEReg(e.target.value)}
             onFocus={e => e.target.style.borderColor = c.text}
             onBlur={e => e.target.style.borderColor = c.inputBorder}
             onKeyDown={e => { if (e.key === "Enter") save(); if (e.key === "Escape") onCancel(); }} />
           <div style={{ display: "flex", gap: 5, marginTop: 8, flexWrap: "wrap" }}>
-            {[4, 6, 7, 8, 9].map(h => <Chip key={h} label={`${h}h`} active={eHrs === String(h)} onClick={() => setEHrs(String(h))} dark={dark} />)}
+            {[4, 6, 7, 8, 9].map(h => <Chip key={h} label={`${h}h`} active={eReg === String(h)} onClick={() => setEReg(String(h))} dark={dark} />)}
           </div>
         </div>
-      ) : (
-        <div>
+      ) : mode === "time" ? (
+        <div style={{ marginBottom: 12 }}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
             <TimePicker value={eIn} onChange={setEIn} dark={dark} label="Time In" />
             <TimePicker value={eOut} onChange={setEOut} dark={dark} label="Time Out" />
           </div>
-          {derivedH > 0 && (
-            <div style={{ fontSize: 11, color: c.muted, fontFamily: "'Geist Mono',monospace", marginBottom: 12 }}>
-              = {derivedH % 1 === 0 ? derivedH : derivedH.toFixed(2)} hrs
+          {regH > 0 && (
+            <div style={{ fontSize: 11, color: c.muted, fontFamily: "'Geist Mono',monospace" }}>
+              = {regH % 1 === 0 ? regH : regH.toFixed(2)} hrs
             </div>
           )}
+        </div>
+      ) : (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <div>
+              <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 5, fontFamily: "'Geist Mono',monospace" }}>Regular hours</div>
+              <input type="number" value={eReg} min="0" max="24" step="0.5" style={inputStyle}
+                onChange={e => setEReg(e.target.value)}
+                onFocus={e => e.target.style.borderColor = c.text}
+                onBlur={e => e.target.style.borderColor = c.inputBorder} />
+            </div>
+            <div>
+              <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 5, fontFamily: "'Geist Mono',monospace" }}>OT hours</div>
+              <input type="number" value={eOT} min="-24" max="24" step="0.5" style={inputStyle}
+                onChange={e => setEOT(e.target.value)}
+                onFocus={e => e.target.style.borderColor = c.text}
+                onBlur={e => e.target.style.borderColor = c.inputBorder} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 5, fontFamily: "'Geist Mono',monospace" }}>OT hours</div>
+        <input type="number" value={eOT} min="0" max="24" step="0.5" style={inputStyle}
+          onChange={e => setEOT(e.target.value)}
+          onFocus={e => e.target.style.borderColor = c.text}
+          onBlur={e => e.target.style.borderColor = c.inputBorder}
+          onKeyDown={e => { if (e.key === "Enter") save(); if (e.key === "Escape") onCancel(); }} />
+      </div>
+
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 5, fontFamily: "'Geist Mono',monospace" }}>Minus hours</div>
+        <input type="number" value={eMinus} min="0" max="24" step="0.5" style={inputStyle}
+          onChange={e => setEMinus(e.target.value)}
+          onFocus={e => e.target.style.borderColor = c.text}
+          onBlur={e => e.target.style.borderColor = c.inputBorder}
+          onKeyDown={e => { if (e.key === "Enter") save(); if (e.key === "Escape") onCancel(); }} />
+      </div>
+
+      {derivedH > 0 && (
+        <div style={{ fontSize: 11, color: c.muted, fontFamily: "'Geist Mono',monospace", marginBottom: 12 }}>
+          = {derivedH % 1 === 0 ? derivedH : derivedH.toFixed(2)} hrs
         </div>
       )}
 
@@ -566,10 +601,22 @@ export default function OjtMinimal() {
   const [theme, setTheme] = useState(loadTheme);
   const dark = theme === "dark";
 
+  const BULK_OT_WEEKDAY_OPTIONS = [
+    [1, "Mon"],
+    [2, "Tue"],
+    [3, "Wed"],
+    [4, "Thu"],
+    [5, "Fri"],
+    [6, "Sat"],
+    [0, "Sun"],
+  ];
+
   // Single entry
   const [date, setDate] = useState(todayStr());
   const [entryMode, setEntryMode] = useState("manual"); // "manual" | "time"
   const [hrs, setHrs] = useState("");
+  const [otHours, setOtHours] = useState("");
+  const [minusHours, setMinusHours] = useState("0");
   const [timeIn, setTimeIn] = useState(defaultTimeIn());
   const [timeOut, setTimeOut] = useState(defaultTimeOut());
   const [err, setErr] = useState("");
@@ -582,6 +629,9 @@ export default function OjtMinimal() {
   const [bEnd, setBEnd] = useState("");
   const [bMode, setBMode] = useState("manual");
   const [bHrs, setBHrs] = useState("8");
+  const [bOtHrs, setBOtHrs] = useState("0");
+  const [bOtDays, setBOtDays] = useState(() => BULK_OT_WEEKDAY_OPTIONS.map(([d]) => d));
+  const [bMinusHrs, setBMinusHrs] = useState("0");
   const [bTimeIn, setBTimeIn] = useState(defaultTimeIn());
   const [bTimeOut, setBTimeOut] = useState(defaultTimeOut());
   const [bSkip, setBSkip] = useState(true);
@@ -601,7 +651,7 @@ export default function OjtMinimal() {
     document.body.style.color = dark ? "#d8d5cf" : "#111";
   }, [theme, dark]);
 
-  const total = entries.reduce((s, e) => s + e.h, 0);
+  const total = entries.reduce((s, e) => s + entryTotal(e), 0);
   const rem = Math.max(0, GOAL - total);
   const pct = Math.min(100, (total / GOAL) * 100);
   const done = total >= GOAL;
@@ -610,11 +660,17 @@ export default function OjtMinimal() {
   const usedDates = new Set(entries.map(e => e.date));
   const isDateTaken = useCallback((d, excludeId) => {
     if (!d) return false;
-    return entries.some(e => e.date === d && e.id !== excludeId);
+    const ex = excludeId == null ? null : String(excludeId);
+    return entries.some(e => e.date === d && String(e.id) !== ex);
   }, [entries]);
 
   const derivedH = entryMode === "time" ? calcHoursFromTimes(timeIn, timeOut) : 0;
   const bDerivedH = bMode === "time" ? calcHoursFromTimes(bTimeIn, bTimeOut) : 0;
+
+  const singleRegH = entryMode === "time" ? derivedH : (parseFloat(hrs) || 0);
+  const singleOtH = parseFloat(otHours) || 0;
+  const singleMinusH = parseFloat(minusHours) || 0;
+  const singleTotalH = Math.max(0, (singleRegH + singleOtH) - singleMinusH);
 
   const openDupModal = useCallback((d, mode) => {
     if (mode === "bulk") {
@@ -632,6 +688,50 @@ export default function OjtMinimal() {
     });
   }, []);
 
+  const dailyTotals = entries.reduce((m, e) => {
+    const t = entryTotal(e);
+    if (t <= 0) return m;
+    m.set(e.date, (m.get(e.date) || 0) + t);
+    return m;
+  }, new Map());
+  const avgPerDay = dailyTotals.size > 0 ? (total / dailyTotals.size) : 0;
+
+  const isWeekend = (d) => d.getDay() === 0 || d.getDay() === 6;
+  const nextWorkdayStart = () => {
+    const d = new Date();
+    d.setHours(8, 0, 0, 0);
+    while (isWeekend(d)) d.setDate(d.getDate() + 1);
+    return d;
+  };
+  const addBusinessDays = (start, days) => {
+    const d = new Date(start);
+    for (let i = 0; i < days; i++) {
+      d.setDate(d.getDate() + 1);
+      while (isWeekend(d)) d.setDate(d.getDate() + 1);
+    }
+    return d;
+  };
+  const estimateCompletion = () => {
+    if (rem <= 0) return null;
+    if (!(avgPerDay > 0)) return null;
+
+    const daysNeeded = rem / avgPerDay;
+    let wholeDays = Math.floor(daysNeeded);
+    let frac = daysNeeded - wholeDays;
+    if (frac === 0) {
+      frac = 1;
+      wholeDays = Math.max(0, wholeDays - 1);
+    }
+
+    const start = nextWorkdayStart();
+    const day = addBusinessDays(start, wholeDays);
+    const ms = (frac * avgPerDay) * 60 * 60 * 1000;
+    const est = new Date(day.getTime() + ms);
+    while (isWeekend(est)) est.setDate(est.getDate() + 1);
+    return est;
+  };
+  const eta = estimateCompletion();
+
   const add = () => {
     if (!date) return setErr("Date required.");
     if (usedDates.has(date)) {
@@ -639,21 +739,27 @@ export default function OjtMinimal() {
       openDupModal(date, "single");
       return;
     }
-    let h;
-    if (entryMode === "manual") {
-      h = parseFloat(hrs);
-      if (!hrs || isNaN(h) || h <= 0 || h > 24) return setErr("Enter hours between 0.5 and 24.");
-    } else {
-      h = derivedH;
-      if (h <= 0) return setErr("Time out must be after time in.");
-    }
+    if (singleRegH < 0 || singleRegH > 24) return setErr("Hours must be 0–24.");
+    if (singleOtH < 0 || singleOtH > 24) return setErr("OT hours must be 0–24.");
+    if (singleMinusH < 0 || singleMinusH > 24) return setErr("Minus hours must be 0–24.");
+    if ((singleRegH + singleOtH) <= 0) return setErr("Enter hours to log.");
+    if (entryMode === "time" && singleRegH <= 0) return setErr("Time out must be after time in.");
+    if (singleTotalH <= 0) return setErr("Total after minus must be greater than 0.");
+    if (singleTotalH > 24) return setErr("Total hours cannot exceed 24.");
     setErr("");
     setEntries(p => [...p, {
-      id: crypto.randomUUID(), date, h,
+      id: crypto.randomUUID(),
+      date,
+      hReg: singleRegH,
+      hOT: singleOtH,
+      hMinus: singleMinusH,
       timeIn: entryMode === "time" ? timeIn : null,
       timeOut: entryMode === "time" ? timeOut : null,
     }]);
-    setHrs(""); setDate(todayStr());
+    setHrs("");
+    setOtHours("");
+    setMinusHours("0");
+    setDate(todayStr());
     setTimeIn(defaultTimeIn()); setTimeOut(defaultTimeOut());
     setFlash(true); setTimeout(() => setFlash(false), 700);
     if (entryMode === "manual") hrsRef.current?.focus();
@@ -687,15 +793,36 @@ export default function OjtMinimal() {
   }, [bStart, bEnd, bSkip]);
 
   const bulkDates = getBulkDates();
-  const bulkH = bMode === "manual" ? (parseFloat(bHrs) || 0) : bDerivedH;
-  const bulkTotal = bulkDates.length * bulkH;
+  const bulkRegH = bMode === "time" ? bDerivedH : (parseFloat(bHrs) || 0);
+  const bulkOtH = parseFloat(bOtHrs) || 0;
+  const bulkMinusH = parseFloat(bMinusHrs) || 0;
+  const otAppliesBulk = useCallback((dateStr) => {
+    const day = parseLocal(dateStr).getDay();
+    return bOtDays.includes(day);
+  }, [bOtDays]);
+
+  const bulkTotal = bulkDates.reduce((sum, d) => {
+    const dayOt = otAppliesBulk(d) ? bulkOtH : 0;
+    const perDay = Math.max(0, (bulkRegH + dayOt) - bulkMinusH);
+    return sum + perDay;
+  }, 0);
   const bulkDupCount = bulkDates.reduce((acc, d) => acc + (usedDates.has(d) ? 1 : 0), 0);
 
   const commitBulk = () => {
     if (!bStart || !bEnd) return setBErr("Select start and end dates.");
     if (parseLocal(bStart) > parseLocal(bEnd)) return setBErr("Start must be before end.");
-    if (bulkH <= 0) return setBErr(bMode === "manual" ? "Enter valid hours per day." : "Time out must be after time in.");
-    if (bulkH > 24) return setBErr("Hours per day cannot exceed 24.");
+    if (bulkRegH < 0 || bulkRegH > 24) return setBErr("Hours must be 0–24.");
+    if (bulkOtH < 0 || bulkOtH > 24) return setBErr("OT hours must be 0–24.");
+    if (bulkMinusH < 0 || bulkMinusH > 24) return setBErr("Minus hours must be 0–24.");
+    if (bulkOtH > 0 && bOtDays.length === 0) return setBErr("Select at least one weekday for OT, or set OT hours to 0.");
+    if ((bulkRegH + bulkOtH) <= 0) return setBErr("Enter hours to log.");
+    if (bMode === "time" && bulkRegH <= 0) return setBErr("Time out must be after time in.");
+    for (const d of bulkDates) {
+      const dayOt = otAppliesBulk(d) ? bulkOtH : 0;
+      const perDay = (bulkRegH + dayOt) - bulkMinusH;
+      if (perDay <= 0) return setBErr("Total after minus must be greater than 0 for every day in the range.");
+      if (perDay > 24) return setBErr("Hours per day cannot exceed 24.");
+    }
     if (bulkDates.length === 0) return setBErr("No valid days in range.");
     if (bulkDupCount > 0) {
       setBErr("");
@@ -704,11 +831,18 @@ export default function OjtMinimal() {
     }
     setBErr("");
     setEntries(p => [...p, ...bulkDates.map(d => ({
-      id: crypto.randomUUID(), date: d, h: bulkH,
+      id: crypto.randomUUID(),
+      date: d,
+      hReg: bulkRegH,
+      hOT: otAppliesBulk(d) ? bulkOtH : 0,
+      hMinus: bulkMinusH,
       timeIn: bMode === "time" ? bTimeIn : null,
       timeOut: bMode === "time" ? bTimeOut : null,
     }))]);
     setBStart(""); setBEnd(""); setBHrs("8");
+    setBOtHrs("0");
+    setBOtDays(BULK_OT_WEEKDAY_OPTIONS.map(([d]) => d));
+    setBMinusHrs("0");
     setBFlash(true); setTimeout(() => { setBFlash(false); setBulkOpen(false); }, 900);
   };
 
@@ -837,6 +971,14 @@ export default function OjtMinimal() {
               <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginTop: 4 }}>Avg / session</div>
             </div>
           </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", borderTop: `1px solid ${c.faint}`, marginTop: 20, paddingTop: 16 }}>
+            <span style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub }}>Estimated completion</span>
+            <span style={{ fontSize: 11, letterSpacing: "0.04em", color: c.muted, fontFamily: "'Geist Mono',monospace" }}>
+              {eta
+                ? eta.toLocaleString(undefined, { year: "numeric", month: "short", day: "2-digit", hour: "numeric", minute: "2-digit" })
+                : "—"}
+            </span>
+          </div>
           {done && <div style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: c.muted, borderTop: `1px solid ${c.faint}`, paddingTop: 16, marginTop: 20 }}>Requirement fulfilled</div>}
         </div>
 
@@ -886,6 +1028,32 @@ export default function OjtMinimal() {
                   <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
                     {[4, 6, 7, 8, 9].map(h => <Chip key={h} label={`${h}h`} active={hrs === String(h)} onClick={() => setHrs(String(h))} dark={dark} />)}
                   </div>
+
+                  <div style={{ marginTop: 14 }}>
+                    <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>OT hours</div>
+                    <input type="number" placeholder="0" value={otHours} min="0" max="24" step="0.5"
+                      style={inputStyle}
+                      onChange={e => setOtHours(e.target.value)}
+                      onFocus={e => e.target.style.borderColor = c.text}
+                      onBlur={e => e.target.style.borderColor = c.inputBorder}
+                      onKeyDown={e => e.key === "Enter" && add()} />
+                  </div>
+
+                  <div style={{ marginTop: 14 }}>
+                    <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>Minus hours</div>
+                    <input type="number" placeholder="0" value={minusHours} min="0" max="24" step="0.5"
+                      style={inputStyle}
+                      onChange={e => setMinusHours(e.target.value)}
+                      onFocus={e => e.target.style.borderColor = c.text}
+                      onBlur={e => e.target.style.borderColor = c.inputBorder}
+                      onKeyDown={e => e.key === "Enter" && add()} />
+                  </div>
+
+                  {singleTotalH > 0 && (
+                    <div style={{ fontSize: 12, color: c.muted, fontFamily: "'Geist Mono',monospace", marginTop: 12 }}>
+                      = {singleTotalH % 1 === 0 ? singleTotalH : singleTotalH.toFixed(2)} hrs
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div style={{ marginBottom: 20 }}>
@@ -893,9 +1061,30 @@ export default function OjtMinimal() {
                     <TimePicker value={timeIn} onChange={setTimeIn} dark={dark} label="Time In" />
                     <TimePicker value={timeOut} onChange={setTimeOut} dark={dark} label="Time Out" />
                   </div>
-                  {derivedH > 0 && (
-                    <div style={{ fontSize: 12, color: c.muted, fontFamily: "'Geist Mono',monospace" }}>
-                      = {derivedH % 1 === 0 ? derivedH : derivedH.toFixed(2)} hrs
+
+                  <div style={{ marginTop: 14 }}>
+                    <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>OT hours</div>
+                    <input type="number" placeholder="0" value={otHours} min="0" max="24" step="0.5"
+                      style={inputStyle}
+                      onChange={e => setOtHours(e.target.value)}
+                      onFocus={e => e.target.style.borderColor = c.text}
+                      onBlur={e => e.target.style.borderColor = c.inputBorder}
+                      onKeyDown={e => e.key === "Enter" && add()} />
+                  </div>
+
+                  <div style={{ marginTop: 14 }}>
+                    <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>Minus hours</div>
+                    <input type="number" placeholder="0" value={minusHours} min="0" max="24" step="0.5"
+                      style={inputStyle}
+                      onChange={e => setMinusHours(e.target.value)}
+                      onFocus={e => e.target.style.borderColor = c.text}
+                      onBlur={e => e.target.style.borderColor = c.inputBorder}
+                      onKeyDown={e => e.key === "Enter" && add()} />
+                  </div>
+
+                  {singleTotalH > 0 && (
+                    <div style={{ fontSize: 12, color: c.muted, fontFamily: "'Geist Mono',monospace", marginTop: 12 }}>
+                      = {singleTotalH % 1 === 0 ? singleTotalH : singleTotalH.toFixed(2)} hrs
                     </div>
                   )}
                 </div>
@@ -936,7 +1125,7 @@ export default function OjtMinimal() {
               {bMode === "manual" ? (
                 <div style={{ marginBottom: 16 }}>
                   <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>Hours per day</div>
-                  <input type="number" placeholder="8" value={bHrs} min="0.5" max="24" step="0.5"
+                  <input type="number" placeholder="8" value={bHrs} min="0" max="24" step="0.5"
                     style={inputStyle}
                     onChange={e => setBHrs(e.target.value)}
                     onFocus={e => e.target.style.borderColor = c.text}
@@ -959,12 +1148,45 @@ export default function OjtMinimal() {
                 </div>
               )}
 
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>OT hours / day</div>
+                <input type="number" placeholder="0" value={bOtHrs} min="0" max="24" step="0.5"
+                  style={inputStyle}
+                  onChange={e => setBOtHrs(e.target.value)}
+                  onFocus={e => e.target.style.borderColor = c.text}
+                  onBlur={e => e.target.style.borderColor = c.inputBorder} />
+
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: c.muted, marginBottom: 8, fontFamily: "'Geist Mono',monospace" }}>Apply OT on</div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {BULK_OT_WEEKDAY_OPTIONS.map(([day, label]) => (
+                      <Chip
+                        key={day}
+                        label={label}
+                        active={bOtDays.includes(day)}
+                        onClick={() => setBOtDays(prev => prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day])}
+                        dark={dark}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>Minus hours / day</div>
+                <input type="number" placeholder="0" value={bMinusHrs} min="0" max="24" step="0.5"
+                  style={inputStyle}
+                  onChange={e => setBMinusHrs(e.target.value)}
+                  onFocus={e => e.target.style.borderColor = c.text}
+                  onBlur={e => e.target.style.borderColor = c.inputBorder} />
+              </div>
+
               <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 11, color: c.sub, letterSpacing: "0.06em", userSelect: "none", marginBottom: 20 }}>
                 <input type="checkbox" checked={bSkip} onChange={e => setBSkip(e.target.checked)} style={{ accentColor: c.text, width: 13, height: 13 }} />
                 Skip weekends
               </label>
 
-              {bStart && bEnd && bulkH > 0 && bulkDates.length > 0 && (
+              {bStart && bEnd && bulkDates.length > 0 && (
                 <div style={{ background: c.previewBg, padding: "12px 14px", marginBottom: 14, borderTop: `1px solid ${c.faint}` }}>
                   {[["Days", bulkDates.length], ["Hours to add", n(bulkTotal)], ["New total", n(Math.min(GOAL, total + bulkTotal))]].map(([lbl, val]) => (
                     <div key={lbl} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
@@ -1031,7 +1253,7 @@ export default function OjtMinimal() {
                     )}
                   </div>
                   <span style={{ fontFamily: "'Instrument Serif',serif", fontSize: 20, color: c.text, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
-                    {n(e.h)}<span style={{ fontSize: 10, color: c.sub, letterSpacing: "0.06em", marginLeft: 3 }}>hr</span>
+                    {n(entryTotal(e))}<span style={{ fontSize: 10, color: c.sub, letterSpacing: "0.06em", marginLeft: 3 }}>hr</span>
                   </span>
                   <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0, marginLeft: 16 }}>
                     <button className="action-btn" onClick={() => setEditingId(e.id)}>Edit</button>
