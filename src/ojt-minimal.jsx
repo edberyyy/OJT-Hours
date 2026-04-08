@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 const GOAL = 500;
 const KEY = "ojt_v3";
 const THEME_KEY = "ojt_theme";
+const GOAL_KEY = "ojt_goal";
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
@@ -121,6 +122,16 @@ const loadEntries = () => {
 };
 const loadTheme = () => {
   try { return localStorage.getItem(THEME_KEY) || "light"; } catch { return "light"; }
+};
+const loadGoal = () => {
+  try {
+    const raw = localStorage.getItem(GOAL_KEY);
+    if (raw == null) return null;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  } catch {
+    return null;
+  }
 };
 
 // ── Calendar ─────────────────────────────────────────────────────
@@ -481,20 +492,20 @@ function DeleteModal({ entry, onConfirm, onCancel, dark }) {
 
 function DuplicateDateModal({ title, message, onClose, dark }) {
   const c = {
-    overlay: "rgba(0,0,0,0.55)",
-    bg: dark ? "#141414" : "#fff",
-    border: dark ? "#272727" : "#e4e1db",
-    text: dark ? "#d8d5cf" : "#111",
-    sub: dark ? "#555" : "#b0ada6",
-    faint: dark ? "#1e1e1e" : "#e0ddd7",
-    btnBg: dark ? "#d8d5cf" : "#111",
-    btnTx: dark ? "#111" : "#f7f6f3",
+    overlay: dark ? "rgba(5, 7, 12, 0.72)" : "rgba(17, 19, 23, 0.42)",
+    bg: dark ? "#12161b" : "#fffdf9",
+    border: dark ? "#252b33" : "#e6dfd4",
+    text: dark ? "#efe9df" : "#1f2937",
+    sub: dark ? "#8d96a0" : "#667085",
+    faint: dark ? "#20262f" : "#ede6da",
+    btnBg: dark ? "#d9e1eb" : "#243b53",
+    btnTx: dark ? "#11161b" : "#fbf8f2",
   };
 
   return (
     <div style={{ position: "fixed", inset: 0, background: c.overlay, zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
       onClick={onClose}>
-      <div style={{ background: c.bg, border: `1px solid ${c.border}`, padding: "28px 24px", maxWidth: 340, width: "100%", boxShadow: dark ? "0 24px 60px rgba(0,0,0,0.8)" : "0 24px 60px rgba(0,0,0,0.15)" }}
+      <div style={{ background: c.bg, border: `1px solid ${c.border}`, padding: "28px 24px 24px", maxWidth: 380, width: "100%", boxShadow: dark ? "0 24px 60px rgba(0,0,0,0.8)" : "0 24px 60px rgba(17,19,23,0.16)", borderRadius: 24 }}
         onClick={e => e.stopPropagation()}>
         <div style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: c.sub, marginBottom: 16, fontFamily: "'Geist Mono',monospace" }}>Notice</div>
         <div style={{ fontFamily: "'Instrument Serif',serif", fontSize: 22, color: c.text, lineHeight: 1.2, marginBottom: 8 }}>
@@ -509,10 +520,108 @@ function DuplicateDateModal({ title, message, onClose, dark }) {
           border: "none", padding: "9px 0",
           fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase",
           fontFamily: "'Geist Mono',monospace", cursor: "pointer", transition: "opacity 0.15s",
+          borderRadius: 999,
         }}
           onMouseEnter={e => e.currentTarget.style.opacity = "0.75"}
           onMouseLeave={e => e.currentTarget.style.opacity = "1"}
         >OK</button>
+      </div>
+    </div>
+  );
+}
+
+function GoalModal({ mode, value, onSave, onCancel, dark }) {
+  const [goalValue, setGoalValue] = useState(String(value));
+  const c = {
+    overlay: dark ? "rgba(5, 7, 12, 0.72)" : "rgba(17, 19, 23, 0.42)",
+    bg: dark ? "#12161b" : "#fffdf9",
+    border: dark ? "#252b33" : "#e6dfd4",
+    text: dark ? "#efe9df" : "#1f2937",
+    sub: dark ? "#8d96a0" : "#667085",
+    faint: dark ? "#20262f" : "#ede6da",
+    btnBg: dark ? "#d9e1eb" : "#243b53",
+    btnTx: dark ? "#11161b" : "#fbf8f2",
+    border: dark ? "#2a313d" : "#d8d1c7",
+  };
+
+  useEffect(() => {
+    setGoalValue(String(value));
+  }, [value]);
+
+  const submit = () => {
+    const parsed = Number(goalValue);
+    if (!Number.isFinite(parsed) || parsed <= 0) return;
+    onSave(Math.round(parsed));
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: c.overlay, zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, backdropFilter: "blur(8px)" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: c.bg, border: `1px solid ${c.border}`, padding: "28px 24px 24px", maxWidth: 380, width: "100%", boxShadow: dark ? "0 24px 60px rgba(0,0,0,0.8)" : "0 24px 60px rgba(17,19,23,0.16)", borderRadius: 24 }}>
+        <div style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: c.sub, marginBottom: 16, fontFamily: "'Geist Mono',monospace" }}>{mode === "reset" ? "Reset Progress" : mode === "change" ? "Change Target" : "Start Setup"}</div>
+        <div style={{ fontFamily: "'Instrument Serif',serif", fontSize: 24, color: c.text, lineHeight: 1.1, marginBottom: 8 }}>
+          How many hours do you need?
+        </div>
+        <div style={{ fontSize: 12, color: c.sub, fontFamily: "'Geist Mono',monospace", marginBottom: 18, lineHeight: 1.5 }}>
+          {mode === "reset"
+            ? "This will clear the current progress and start a new target."
+            : mode === "change"
+              ? "Update the target without clearing your logged hours."
+              : "Set your target before you begin logging hours."}
+        </div>
+        <div style={{ marginBottom: 18 }}>
+          <div style={{ fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: c.sub, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>Target hours</div>
+          <input
+            type="number"
+            min="1"
+            step="1"
+            value={goalValue}
+            onChange={e => setGoalValue(e.target.value)}
+            style={{ background: dark ? "rgba(255,255,255,0.02)" : "#fff", border: `1px solid ${c.border}`, borderRadius: 14, outline: "none", fontFamily: "Inter, 'Segoe UI', system-ui, sans-serif", fontSize: 15, lineHeight: 1.5, letterSpacing: "0.01em", color: c.text, padding: "12px 14px", width: "100%" }}
+          />
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onCancel} style={{ flex: 1, background: "transparent", color: c.sub, border: `1px solid ${c.faint}`, padding: "11px 0", borderRadius: 999, fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", fontFamily: "'Geist Mono',monospace", cursor: "pointer" }}>
+            Cancel
+          </button>
+          <button onClick={submit} style={{ flex: 1, background: c.btnBg, color: c.btnTx, border: "none", padding: "11px 0", borderRadius: 999, fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", fontFamily: "'Geist Mono',monospace", cursor: "pointer" }}>
+            Save target
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ResetConfirmModal({ onConfirm, onCancel, dark }) {
+  const c = {
+    overlay: dark ? "rgba(5, 7, 12, 0.72)" : "rgba(17, 19, 23, 0.42)",
+    bg: dark ? "#12161b" : "#fffdf9",
+    border: dark ? "#252b33" : "#e6dfd4",
+    text: dark ? "#efe9df" : "#1f2937",
+    sub: dark ? "#8d96a0" : "#667085",
+    faint: dark ? "#20262f" : "#ede6da",
+    btnBg: dark ? "#d9e1eb" : "#243b53",
+    btnTx: dark ? "#11161b" : "#fbf8f2",
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: c.overlay, zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, backdropFilter: "blur(8px)" }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: c.bg, border: `1px solid ${c.border}`, padding: "28px 24px 24px", maxWidth: 380, width: "100%", boxShadow: dark ? "0 24px 60px rgba(0,0,0,0.8)" : "0 24px 60px rgba(17,19,23,0.16)", borderRadius: 24 }}>
+        <div style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: c.sub, marginBottom: 16, fontFamily: "'Geist Mono',monospace" }}>Reset Progress</div>
+        <div style={{ fontFamily: "'Instrument Serif',serif", fontSize: 24, color: c.text, lineHeight: 1.1, marginBottom: 8 }}>
+          Are you sure you want to reset?
+        </div>
+        <div style={{ fontSize: 12, color: c.sub, fontFamily: "'Geist Mono',monospace", marginBottom: 24, lineHeight: 1.5 }}>
+          This clears the current progress before asking for a new target.
+        </div>
+        <div style={{ display: "flex", gap: 10 }}>
+          <button onClick={onCancel} style={{ flex: 1, background: "transparent", color: c.sub, border: `1px solid ${c.faint}`, padding: "11px 0", borderRadius: 999, fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", fontFamily: "'Geist Mono',monospace", cursor: "pointer" }}>
+            Cancel
+          </button>
+          <button onClick={onConfirm} style={{ flex: 1, background: c.btnBg, color: c.btnTx, border: "none", padding: "11px 0", borderRadius: 999, fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase", fontFamily: "'Geist Mono',monospace", cursor: "pointer" }}>
+            Yes, reset
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -748,6 +857,8 @@ export default function OjtMinimal() {
     [0, "Sun"],
   ];
 
+  const savedGoal = loadGoal();
+
   // Single entry
   const [date, setDate] = useState(todayStr());
   const [entryMode, setEntryMode] = useState("manual"); // "manual" | "time"
@@ -782,6 +893,10 @@ export default function OjtMinimal() {
   const [dupNotice, setDupNotice] = useState(null); // { title: string, message: string }
   const [showLogForm, setShowLogForm] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [goal, setGoal] = useState(savedGoal ?? GOAL);
+  const [goalMode, setGoalMode] = useState(savedGoal == null ? "setup" : "change");
+  const [showGoalModal, setShowGoalModal] = useState(savedGoal == null);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   const handleBulkToggle = () => {
     setBulkOpen(prev => {
@@ -806,6 +921,46 @@ export default function OjtMinimal() {
     setBErr("");
   };
 
+  const handleOpenReset = () => {
+    setShowResetConfirm(true);
+  };
+
+  const handleOpenGoalChange = () => {
+    setGoalMode("change");
+    setShowGoalModal(true);
+  };
+
+  const handleConfirmReset = () => {
+    setShowResetConfirm(false);
+    setGoalMode("reset");
+    setShowGoalModal(true);
+  };
+
+  const handleSaveGoal = (nextGoal) => {
+    try { localStorage.setItem(GOAL_KEY, String(nextGoal)); } catch {}
+    setGoal(nextGoal);
+    setShowGoalModal(false);
+
+    if (goalMode === "reset") {
+      setEntries([]);
+      setDate(todayStr());
+      setEntryMode("manual");
+      setHrs("");
+      setOtHours("");
+      setMinusHours("0");
+      setTimeIn(defaultTimeIn());
+      setTimeOut(defaultTimeOut());
+      setBulkOpen(false);
+      setEditingId(null);
+      setShowLogForm(false);
+      setShowHistory(false);
+      setConfirmDelete(null);
+      setDupNotice(null);
+      setErr("");
+      setBErr("");
+    }
+  };
+
   const startEdit = (id) => {
     setBulkOpen(false);
     setShowLogForm(false);
@@ -820,9 +975,9 @@ export default function OjtMinimal() {
   }, [theme, dark]);
 
   const total = entries.reduce((s, e) => s + entryTotal(e), 0);
-  const rem = Math.max(0, GOAL - total);
-  const pct = Math.min(100, (total / GOAL) * 100);
-  const done = total >= GOAL;
+  const rem = Math.max(0, goal - total);
+  const pct = Math.min(100, (total / goal) * 100);
+  const done = total >= goal;
   const n = (v) => v % 1 === 0 ? v : v.toFixed(2);
 
   const usedDates = new Set(entries.map(e => e.date));
@@ -1025,6 +1180,10 @@ export default function OjtMinimal() {
     inputBorder: dark ? "#2a313d" : "#d8d1c7",
     btnBg: dark ? "#cfd7e2" : "#243b53",
     btnTx: dark ? "#14171c" : "#fbf8f2",
+    modeBg: dark ? "#f1c97a" : "#1f2d3d",
+    modeBorder: dark ? "#e3b34c" : "#111c28",
+    modeTx: dark ? "#1b1f26" : "#f7f4ee",
+    modeShadow: dark ? "0 10px 22px rgba(241, 201, 122, 0.22)" : "0 10px 22px rgba(31, 45, 61, 0.18)",
     panelBg: dark ? "#15181d" : "#fffdf9",
     panelBorder: dark ? "#242a33" : "#e7ded4",
     previewBg: dark ? "#101317" : "#faf6ef",
@@ -1144,19 +1303,65 @@ export default function OjtMinimal() {
         />
       )}
 
+      {showResetConfirm && (
+        <ResetConfirmModal
+          onConfirm={handleConfirmReset}
+          onCancel={() => setShowResetConfirm(false)}
+          dark={dark}
+        />
+      )}
+
+      {showGoalModal && (
+        <GoalModal
+          mode={goalMode}
+          value={goal}
+          onSave={handleSaveGoal}
+          onCancel={() => setShowGoalModal(false)}
+          dark={dark}
+        />
+      )}
+
       <div className="wrap app-shell" style={{ ...shellStyle, padding: "88px 28px 120px" }}>
 
         {/* Top bar */}
-        <div className="app-topbar" style={{ marginBottom: 56 }}>
-          <span className="app-overline" style={{ color: c.muted }}>OJT Progress</span>
-          <button onClick={() => setTheme(t => t === "light" ? "dark" : "light")} style={{
-            background: "none", border: `1px solid ${c.faint}`, color: c.muted,
-            padding: "9px 16px", fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase",
-            transition: "all 0.15s",
-          }}
-            onMouseEnter={e => { e.currentTarget.style.borderColor = c.text; e.currentTarget.style.color = c.text; }}
-            onMouseLeave={e => { e.currentTarget.style.borderColor = c.faint; e.currentTarget.style.color = c.muted; }}
-          >{dark ? "Light" : "Dark"}</button>
+        <div className="app-topbar" style={{ marginBottom: 56, alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
+          <div>
+            <span className="app-overline" style={{ color: c.muted }}>OJT Progress</span>
+            <div style={{ marginTop: 8, fontSize: 12, letterSpacing: "0.01em", color: c.sub }}>
+              Target {goal} hours
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center", alignSelf: "flex-start", marginLeft: "auto", padding: 6, borderRadius: 999, border: `1px solid ${c.faint}`, background: dark ? "rgba(255,255,255,0.02)" : "rgba(255,255,255,0.72)" }}>
+            <button onClick={handleOpenGoalChange} style={{
+              background: c.btnBg, border: `1px solid ${c.btnBg}`, color: c.btnTx,
+              padding: "8px 12px", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase",
+              borderRadius: 999,
+              transition: "all 0.15s",
+              boxShadow: dark ? "0 10px 24px rgba(0,0,0,0.18)" : "0 8px 18px rgba(36,40,50,0.08)",
+            }}
+              onMouseEnter={e => { e.currentTarget.style.opacity = "0.92"; }}
+              onMouseLeave={e => { e.currentTarget.style.opacity = "1"; }}
+            >Change hours</button>
+            <button onClick={handleOpenReset} style={{
+              background: "transparent", border: `1px solid ${c.faint}`, color: c.sub,
+              padding: "8px 12px", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase",
+              borderRadius: 999,
+              transition: "all 0.15s",
+            }}
+              onMouseEnter={e => { e.currentTarget.style.borderColor = c.text; e.currentTarget.style.color = c.text; }}
+              onMouseLeave={e => { e.currentTarget.style.borderColor = c.faint; e.currentTarget.style.color = c.sub; }}
+            >Reset</button>
+            <button onClick={() => setTheme(t => t === "light" ? "dark" : "light")} style={{
+              background: c.modeBg, border: `1px solid ${c.modeBorder}`, color: c.modeTx,
+              padding: "8px 12px", fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase",
+              borderRadius: 999,
+              transition: "all 0.15s",
+              boxShadow: c.modeShadow,
+            }}
+              onMouseEnter={e => { e.currentTarget.style.filter = "brightness(0.98)"; }}
+              onMouseLeave={e => { e.currentTarget.style.filter = "brightness(1)"; }}
+            >{dark ? "Light" : "Dark"}</button>
+          </div>
         </div>
 
         {/* Hero */}
@@ -1165,7 +1370,7 @@ export default function OjtMinimal() {
             {n(total)}
           </div>
           <div style={{ fontSize: 14, fontWeight: 500, color: c.muted, marginTop: 14, letterSpacing: "0.01em" }}>
-            of {GOAL} hours required
+            of {goal} hours required
           </div>
         </div>
 
@@ -1205,14 +1410,15 @@ export default function OjtMinimal() {
 
         {/* Log Entry */}
         <div className="app-surface app-surface--panel" style={{ ...surfaceStyle, ...surfacePaddingStyle, marginBottom: 56, background: dark ? "#15181d" : "#fffdf9" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 24, gap: 12, flexWrap: "wrap" }}>
-            <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 24 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
               <div style={sectionLabelStyle}>Log Entry</div>
               <div style={{ fontSize: 12, lineHeight: 1.6, letterSpacing: "0.01em", color: c.sub, marginTop: 6 }}>
                 {showLogForm ? "Add a clean single log or switch to bulk entry." : "Hidden until you open it."}
               </div>
             </div>
             <button onClick={handleLogToggle} style={{
+              flexShrink: 0,
               background: showLogForm ? c.btnBg : "transparent", border: `1px solid ${showLogForm ? c.btnBg : c.faint}`, padding: "8px 14px", fontSize: 10,
               letterSpacing: "0.1em", textTransform: "uppercase", color: showLogForm ? c.btnTx : c.sub,
               borderRadius: 999, transition: "all 0.15s", fontFamily: "Inter, 'Segoe UI', system-ui, sans-serif",
@@ -1339,7 +1545,7 @@ export default function OjtMinimal() {
 
               {bStart && bEnd && bulkDates.length > 0 && (
                 <div style={{ background: c.previewBg, padding: "12px 14px", marginBottom: 14, borderTop: `1px solid ${c.faint}` }}>
-                  {[['Days', bulkDates.length], ['Hours to add', n(bulkTotal)], ['New total', n(Math.min(GOAL, total + bulkTotal))]].map(([lbl, val]) => (
+                  {[['Days', bulkDates.length], ['Hours to add', n(bulkTotal)], ['New total', n(Math.min(goal, total + bulkTotal))]].map(([lbl, val]) => (
                     <div key={lbl} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
                       <span style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub }}>{lbl}</span>
                       <span style={{ fontFamily: "'Instrument Serif',serif", fontSize: 20, color: c.text, fontVariantNumeric: "tabular-nums" }}>{val}</span>
