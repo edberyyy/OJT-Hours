@@ -43,6 +43,32 @@ const minutesToHours = (mins) => {
   return Math.round((mins / 60) * 100) / 100;
 };
 
+const pad2 = (n) => String(n).padStart(2, "0");
+
+const timeToDisplay = (t) => {
+  if (!t) return "";
+  return `${t.h}:${pad2(t.m)} ${t.period}`;
+};
+
+const parseDisplayTime = (value) => {
+  const match = /^\s*(\d{1,2}):(\d{2})\s*([AaPp][Mm])\s*$/.exec(value || "");
+  if (!match) return null;
+  const hour24 = Number(match[1]);
+  const minute = Number(match[2]);
+  const period = match[3].toUpperCase();
+  if (Number.isNaN(hour24) || Number.isNaN(minute)) return null;
+  if (hour24 < 0 || hour24 > 23 || minute < 0 || minute > 59) return null;
+  if (hour24 > 12) return null;
+  if (hour24 === 0) return null;
+  const hour12 = hour24;
+  return { h: hour12, m: minute, period };
+};
+
+const formatTimeInput = (value) => {
+  const next = parseDisplayTime(value);
+  return next ? timeToDisplay(next) : value;
+};
+
 const fmtTime = (t) => {
   if (!t) return "";
   const mm = String(t.m).padStart(2, "0");
@@ -98,11 +124,12 @@ const loadTheme = () => {
 };
 
 // ── Calendar ─────────────────────────────────────────────────────
-function Calendar({ value, onChange, maxDate, dark }) {
+function Calendar({ value, onChange, maxDate, dark, disabledDates }) {
   const init = value ? parseLocal(value) : new Date();
   const [view, setView] = useState({ y: init.getFullYear(), m: init.getMonth() });
   const selected = value ? parseLocal(value) : null;
   const max = maxDate ? parseLocal(maxDate) : null;
+  const blocked = disabledDates instanceof Set ? disabledDates : new Set(disabledDates || []);
 
   const firstDay = new Date(view.y, view.m, 1).getDay();
   const daysInMonth = new Date(view.y, view.m + 1, 0).getDate();
@@ -120,11 +147,13 @@ function Calendar({ value, onChange, maxDate, dark }) {
     if (!d) return;
     const ds = toStr(new Date(view.y, view.m, d));
     if (max && parseLocal(ds) > max) return;
+    if (blocked.has(ds)) return;
     onChange(ds);
   };
 
   const isSel = (d) => selected && selected.getFullYear() === view.y && selected.getMonth() === view.m && selected.getDate() === d;
   const isDis = (d) => max && new Date(view.y, view.m, d) > max;
+  const isBlocked = (d) => blocked.has(toStr(new Date(view.y, view.m, d)));
   const isTod = (d) => { const t = new Date(); return t.getFullYear() === view.y && t.getMonth() === view.m && t.getDate() === d; };
 
   const c = {
@@ -156,18 +185,18 @@ function Calendar({ value, onChange, maxDate, dark }) {
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", padding: "0 10px 10px", gap: 1 }}>
         {cells.map((d, i) => {
-          const sel = d && isSel(d), dis = d && isDis(d), tod = d && isTod(d);
+          const sel = d && isSel(d), dis = d && isDis(d), blockedDay = d && isBlocked(d), tod = d && isTod(d);
           return (
-            <div key={i} onClick={() => !dis && pick(d)} style={{
+            <div key={i} onClick={() => !dis && !blockedDay && pick(d)} style={{
               textAlign: "center", padding: "6px 0",
               fontFamily: "'Geist Mono',monospace", fontSize: 11,
-              cursor: d && !dis ? "pointer" : "default",
-              color: !d ? "transparent" : dis ? c.disTx : sel ? c.selTx : c.text,
-              background: sel ? c.selBg : "transparent",
+              cursor: d && !dis && !blockedDay ? "pointer" : "default",
+              color: !d ? "transparent" : dis || blockedDay ? c.disTx : sel ? c.selTx : c.text,
+              background: sel ? c.selBg : blockedDay ? (dark ? "rgba(255,255,255,0.02)" : "#f7f3ec") : "transparent",
               position: "relative", transition: "background 0.1s",
             }}
-              onMouseEnter={e => { if (d && !dis && !sel) e.currentTarget.style.background = c.hov; }}
-              onMouseLeave={e => { if (!sel) e.currentTarget.style.background = "transparent"; }}
+              onMouseEnter={e => { if (d && !dis && !sel && !blockedDay) e.currentTarget.style.background = c.hov; }}
+              onMouseLeave={e => { if (!sel && !blockedDay) e.currentTarget.style.background = "transparent"; }}
             >
               {d || ""}
               {tod && !sel && <span style={{ position: "absolute", bottom: 1, left: "50%", transform: "translateX(-50%)", width: 3, height: 3, borderRadius: "50%", background: c.dot, display: "block" }} />}
@@ -179,7 +208,7 @@ function Calendar({ value, onChange, maxDate, dark }) {
   );
 }
 
-function CalendarField({ value, onChange, maxDate, dark, label, compact }) {
+function CalendarField({ value, onChange, maxDate, dark, label, compact, disabledDates }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
   useEffect(() => {
@@ -199,7 +228,7 @@ function CalendarField({ value, onChange, maxDate, dark, label, compact }) {
       }}>{value ? fmtDate(value) : "Select date"}</button>
       {open && (
         <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 300, width: 254, boxShadow: c.shadow }}>
-          <Calendar value={value} onChange={v => { onChange(v); setOpen(false); }} maxDate={maxDate} dark={dark} />
+          <Calendar value={value} onChange={v => { onChange(v); setOpen(false); }} maxDate={maxDate} dark={dark} disabledDates={disabledDates} />
         </div>
       )}
     </div>
@@ -208,55 +237,128 @@ function CalendarField({ value, onChange, maxDate, dark, label, compact }) {
 
 // ── Time Picker ──────────────────────────────────────────────────
 function TimePicker({ value, onChange, dark, label }) {
+  const [typedValue, setTypedValue] = useState(timeToDisplay(value));
+  const [typedError, setTypedError] = useState("");
   const c = {
-    text: dark ? "#d8d5cf" : "#111",
-    muted: dark ? "#4a4a4a" : "#b0ada6",
-    border: dark ? "#2a2a2a" : "#d0cfc9",
-    selBg: dark ? "#d8d5cf" : "#111",
-    selTx: dark ? "#111" : "#f7f6f3",
-    bg: dark ? "#161616" : "#fff",
-    hdrBg: dark ? "#111" : "#f9f8f5",
-    hov: dark ? "#1e1e1e" : "#f4f2ee",
-    labelColor: dark ? "#555" : "#b0ada6",
+    text: dark ? "#efe9df" : "#1f2937",
+    muted: dark ? "#8d96a0" : "#667085",
+    border: dark ? "#2a313d" : "#d8d1c7",
+    selBg: dark ? "#cfd7e2" : "#243b53",
+    selTx: dark ? "#14171c" : "#fbf8f2",
+    bg: dark ? "#15181d" : "#fffdf9",
+    hdrBg: dark ? "#101317" : "#faf7f0",
+    hov: dark ? "#222831" : "#f4eee5",
+    labelColor: dark ? "#8d96a0" : "#667085",
+    faint: dark ? "#232831" : "#e6dfd4",
   };
 
   const hours = Array.from({ length: 12 }, (_, i) => i + 1);
   const minutes = [0, 15, 30, 45];
 
-  const setH = (h) => onChange({ ...value, h });
-  const setM = (m) => onChange({ ...value, m });
-  const setP = (period) => onChange({ ...value, period });
+  useEffect(() => {
+    setTypedValue(timeToDisplay(value));
+    setTypedError("");
+  }, [value]);
+
+  const applyTypedValue = (raw) => {
+    const parsed = parseDisplayTime(raw);
+    if (!parsed) {
+      setTypedError("Use h:mm AM/PM, such as 8:30 AM.");
+      return false;
+    }
+    onChange(parsed);
+    setTypedValue(timeToDisplay(parsed));
+    setTypedError("");
+    return true;
+  };
+
+  const setH = (h) => {
+    const next = { ...value, h };
+    onChange(next);
+    setTypedValue(timeToDisplay(next));
+    setTypedError("");
+  };
+  const setM = (m) => {
+    const next = { ...value, m };
+    onChange(next);
+    setTypedValue(timeToDisplay(next));
+    setTypedError("");
+  };
+  const setP = (period) => {
+    const next = { ...value, period };
+    onChange(next);
+    setTypedValue(timeToDisplay(next));
+    setTypedError("");
+  };
 
   return (
     <div>
-      {label && <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.labelColor, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>{label}</div>}
-      <div style={{ border: `1px solid ${c.border}`, background: c.bg }}>
-        {/* Header display */}
-        <div style={{ background: c.hdrBg, borderBottom: `1px solid ${c.border}`, padding: "8px 12px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <span style={{ fontFamily: "'Geist Mono',monospace", fontSize: 13, color: c.text, letterSpacing: "0.06em" }}>{fmtTime(value)}</span>
-          <div style={{ display: "flex", gap: 4 }}>
+      {label && <div style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: c.labelColor, marginBottom: 8, fontFamily: "'Geist Mono',monospace" }}>{label}</div>}
+      <div style={{ border: `1px solid ${c.border}`, borderRadius: 18, background: c.bg, overflow: "hidden", boxShadow: dark ? "0 14px 34px rgba(0,0,0,0.18)" : "0 12px 28px rgba(36,40,50,0.06)" }}>
+        <div style={{ background: c.hdrBg, borderBottom: `1px solid ${c.border}`, padding: "12px 14px", display: "grid", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 10, alignItems: "center" }}>
+            <input
+              type="text"
+              inputMode="text"
+              placeholder="8:30 AM"
+              value={typedValue}
+              onChange={e => {
+                const next = e.target.value;
+                setTypedValue(next);
+                if (typedError) setTypedError("");
+              }}
+              onKeyDown={e => {
+                if (e.key === "Enter") applyTypedValue(formatTimeInput(typedValue));
+                if (e.key === "Escape") setTypedValue(timeToDisplay(value));
+              }}
+              style={{
+                background: dark ? "rgba(255,255,255,0.02)" : "#fff",
+                border: `1px solid ${c.border}`,
+                borderRadius: 14,
+                padding: "10px 12px",
+                fontFamily: "Inter, 'Segoe UI', system-ui, sans-serif",
+                fontSize: 14,
+                letterSpacing: "0.03em",
+                color: c.text,
+                outline: "none",
+                transition: "border-color 0.15s, box-shadow 0.15s, transform 0.15s",
+              }}
+              onFocus={e => {
+                e.currentTarget.style.borderColor = c.selBg;
+                e.currentTarget.style.boxShadow = dark ? "0 0 0 3px rgba(207,215,226,0.12)" : "0 0 0 3px rgba(36,59,83,0.10)";
+              }}
+              onBlur={e => {
+                applyTypedValue(formatTimeInput(typedValue));
+                e.currentTarget.style.borderColor = c.border;
+                e.currentTarget.style.boxShadow = "none";
+              }}
+            />
+            <div style={{ display: "flex", gap: 4 }}>
             {["AM", "PM"].map(p => (
               <button key={p} onClick={() => setP(p)} style={{
                 background: value.period === p ? c.selBg : "transparent",
                 color: value.period === p ? c.selTx : c.muted,
                 border: `1px solid ${value.period === p ? c.selBg : c.border}`,
-                padding: "2px 8px", fontSize: 9, letterSpacing: "0.08em",
+                padding: "6px 10px", fontSize: 9, letterSpacing: "0.08em",
                 fontFamily: "'Geist Mono',monospace", cursor: "pointer", transition: "all 0.12s",
+                borderRadius: 999,
               }}>{p}</button>
             ))}
           </div>
+          </div>
+          {typedError && <div style={{ fontSize: 11, color: c.muted, letterSpacing: "0.02em", lineHeight: 1.4 }}>{typedError}</div>}
         </div>
-        {/* Hour grid */}
-        <div style={{ padding: "8px 10px 4px" }}>
-          <div style={{ fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: c.muted, marginBottom: 5, fontFamily: "'Geist Mono',monospace" }}>Hour</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 2 }}>
+        <div style={{ padding: "12px 14px 14px" }}>
+          <div style={{ fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: c.muted, marginBottom: 8, fontFamily: "'Geist Mono',monospace" }}>Hour</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 6 }}>
             {hours.map(h => (
               <button key={h} onClick={() => setH(h)} style={{
                 background: value.h === h ? c.selBg : "transparent",
                 color: value.h === h ? c.selTx : c.text,
                 border: `1px solid ${value.h === h ? c.selBg : c.border}`,
-                padding: "4px 0", fontSize: 11, fontFamily: "'Geist Mono',monospace",
+                padding: "6px 0", fontSize: 11, fontFamily: "'Geist Mono',monospace",
                 cursor: "pointer", textAlign: "center", transition: "all 0.1s",
+                borderRadius: 12,
               }}
                 onMouseEnter={e => { if (value.h !== h) e.currentTarget.style.background = c.hov; }}
                 onMouseLeave={e => { if (value.h !== h) e.currentTarget.style.background = "transparent"; }}
@@ -264,17 +366,17 @@ function TimePicker({ value, onChange, dark, label }) {
             ))}
           </div>
         </div>
-        {/* Minute row */}
-        <div style={{ padding: "6px 10px 10px" }}>
-          <div style={{ fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: c.muted, marginBottom: 5, fontFamily: "'Geist Mono',monospace" }}>Minute</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 2 }}>
+        <div style={{ borderTop: `1px solid ${c.faint}`, padding: "12px 14px 14px", background: dark ? "rgba(255,255,255,0.01)" : "#fff" }}>
+          <div style={{ fontSize: 9, letterSpacing: "0.08em", textTransform: "uppercase", color: c.muted, marginBottom: 8, fontFamily: "'Geist Mono',monospace" }}>Minute</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6 }}>
             {minutes.map(m => (
               <button key={m} onClick={() => setM(m)} style={{
                 background: value.m === m ? c.selBg : "transparent",
                 color: value.m === m ? c.selTx : c.text,
                 border: `1px solid ${value.m === m ? c.selBg : c.border}`,
-                padding: "4px 0", fontSize: 11, fontFamily: "'Geist Mono',monospace",
+                padding: "6px 0", fontSize: 11, fontFamily: "'Geist Mono',monospace",
                 cursor: "pointer", textAlign: "center", transition: "all 0.1s",
+                borderRadius: 12,
               }}
                 onMouseEnter={e => { if (value.m !== m) e.currentTarget.style.background = c.hov; }}
                 onMouseLeave={e => { if (value.m !== m) e.currentTarget.style.background = "transparent"; }}
@@ -293,8 +395,9 @@ function Chip({ label, active, onClick, dark }) {
   return (
     <button onClick={onClick} style={{
       background: active ? c.selBg : "none", border: `1px solid ${active ? c.selBg : c.border}`,
-      color: active ? c.selTx : c.muted, padding: "4px 10px", fontSize: 10,
-      letterSpacing: "0.06em", fontFamily: "'Geist Mono',monospace", cursor: "pointer", transition: "all 0.12s",
+      color: active ? c.selTx : c.muted, padding: "6px 12px", fontSize: 10,
+      letterSpacing: "0.06em", fontFamily: "Inter, 'Segoe UI', system-ui, sans-serif", cursor: "pointer", transition: "all 0.12s",
+      borderRadius: 999,
     }}
       onMouseEnter={e => { if (!active) { e.currentTarget.style.borderColor = c.hov; e.currentTarget.style.color = c.text; } }}
       onMouseLeave={e => { if (!active) { e.currentTarget.style.borderColor = c.border; e.currentTarget.style.color = c.muted; } }}
@@ -305,25 +408,33 @@ function Chip({ label, active, onClick, dark }) {
 // ── Delete Confirm Modal ─────────────────────────────────────────
 function DeleteModal({ entry, onConfirm, onCancel, dark }) {
   const c = {
-    overlay: "rgba(0,0,0,0.55)",
-    bg: dark ? "#141414" : "#fff",
-    border: dark ? "#272727" : "#e4e1db",
-    text: dark ? "#d8d5cf" : "#111",
-    sub: dark ? "#555" : "#b0ada6",
-    faint: dark ? "#1e1e1e" : "#e0ddd7",
-    btnBg: dark ? "#d8d5cf" : "#111",
-    btnTx: dark ? "#111" : "#f7f6f3",
+    overlay: dark ? "rgba(5, 7, 12, 0.72)" : "rgba(17, 19, 23, 0.42)",
+    bg: dark ? "#12161b" : "#fffdf9",
+    border: dark ? "#252b33" : "#e6dfd4",
+    text: dark ? "#efe9df" : "#1f2937",
+    sub: dark ? "#8d96a0" : "#667085",
+    faint: dark ? "#20262f" : "#ede6da",
+    btnBg: dark ? "#d9e1eb" : "#243b53",
+    btnTx: dark ? "#11161b" : "#fbf8f2",
     dangerBg: dark ? "#3a1515" : "#fff0f0",
-    dangerBorder: dark ? "#5c2020" : "#f5c6c6",
-    dangerTx: dark ? "#e07070" : "#c0392b",
+    dangerBorder: dark ? "#6a2424" : "#efc7c7",
+    dangerTx: dark ? "#ff8f8f" : "#bb3a2b",
   };
   return (
-    <div style={{ position: "fixed", inset: 0, background: c.overlay, zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}
+    <div style={{ position: "fixed", inset: 0, background: c.overlay, zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center", padding: 24, backdropFilter: "blur(8px)" }}
       onClick={onCancel}>
-      <div style={{ background: c.bg, border: `1px solid ${c.border}`, padding: "28px 24px", maxWidth: 340, width: "100%", boxShadow: dark ? "0 24px 60px rgba(0,0,0,0.8)" : "0 24px 60px rgba(0,0,0,0.15)" }}
+      <div style={{
+        background: c.bg,
+        border: `1px solid ${c.border}`,
+        padding: "28px 24px 24px",
+        maxWidth: 380,
+        width: "100%",
+        boxShadow: dark ? "0 24px 60px rgba(0,0,0,0.8)" : "0 24px 60px rgba(17,19,23,0.16)",
+        borderRadius: 24,
+      }}
         onClick={e => e.stopPropagation()}>
         <div style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: c.sub, marginBottom: 16, fontFamily: "'Geist Mono',monospace" }}>Confirm Delete</div>
-        <div style={{ fontFamily: "'Instrument Serif',serif", fontSize: 22, color: c.text, lineHeight: 1.2, marginBottom: 8 }}>
+        <div style={{ fontFamily: "'Instrument Serif',serif", fontSize: 24, color: c.text, lineHeight: 1.1, marginBottom: 8 }}>
           Remove this entry?
         </div>
         <div style={{ fontSize: 12, color: c.sub, fontFamily: "'Geist Mono',monospace", marginBottom: 6 }}>
@@ -347,6 +458,7 @@ function DeleteModal({ entry, onConfirm, onCancel, dark }) {
             border: `1px solid ${c.dangerBorder}`, padding: "9px 0",
             fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase",
             fontFamily: "'Geist Mono',monospace", cursor: "pointer", transition: "opacity 0.15s",
+            borderRadius: 999,
           }}
             onMouseEnter={e => e.currentTarget.style.opacity = "0.8"}
             onMouseLeave={e => e.currentTarget.style.opacity = "1"}
@@ -356,6 +468,7 @@ function DeleteModal({ entry, onConfirm, onCancel, dark }) {
             border: "none", padding: "9px 0",
             fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase",
             fontFamily: "'Geist Mono',monospace", cursor: "pointer", transition: "opacity 0.15s",
+            borderRadius: 999,
           }}
             onMouseEnter={e => e.currentTarget.style.opacity = "0.75"}
             onMouseLeave={e => e.currentTarget.style.opacity = "1"}
@@ -405,8 +518,36 @@ function DuplicateDateModal({ title, message, onClose, dark }) {
   );
 }
 
+function LogRow({ entry, colors, removing, onEdit, onDelete }) {
+  return (
+    <div className={`log-item${removing ? " out" : ""}`}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 14, color: colors.text, fontWeight: 600, lineHeight: 1.35 }}>
+          {fmtDate(entry.date)}
+          <span style={{ fontSize: 10, color: colors.sub, marginLeft: 8, letterSpacing: "0.04em", fontWeight: 500 }}>
+            {fmtWeekday(entry.date)}
+          </span>
+        </div>
+        {entry.timeIn && entry.timeOut && (
+          <div style={{ fontSize: 11, color: colors.sub, fontFamily: "'Geist Mono',monospace", marginTop: 4, letterSpacing: "0.03em" }}>
+            {fmtTime(entry.timeIn)} — {fmtTime(entry.timeOut)}
+          </div>
+        )}
+      </div>
+      <span style={{ fontFamily: "Inter, 'Segoe UI', system-ui, sans-serif", fontSize: 18, color: colors.text, fontWeight: 700, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
+        {Number(entryTotal(entry)).toFixed(2).replace(/\.00$/, "")}<span style={{ fontSize: 10, color: colors.sub, letterSpacing: "0.06em", marginLeft: 3, fontWeight: 500 }}>hr</span>
+      </span>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0, marginLeft: 16 }}>
+        <button className="action-btn" onClick={() => onEdit(entry.id)}>Edit</button>
+        <div className="log-sep" />
+        <button className="action-btn danger" onClick={() => onDelete(entry)}>Delete</button>
+      </div>
+    </div>
+  );
+}
+
 // ── Inline Edit Row ──────────────────────────────────────────────
-function EditRow({ entry, onSave, onCancel, dark, isDateTaken, onDuplicate }) {
+function EditRow({ entry, onSave, onCancel, dark, isDateTaken, onDuplicate, disabledDates }) {
   const init = normalizeEntry(entry);
   const [eDate, setEDate] = useState(entry.date);
   const [mode, setMode] = useState(entry.timeIn ? "time" : "manual");
@@ -424,27 +565,35 @@ function EditRow({ entry, onSave, onCancel, dark, isDateTaken, onDuplicate }) {
   const dateTaken = Boolean(isDateTaken && isDateTaken(eDate, entry.id));
 
   const c = {
-    text: dark ? "#d8d5cf" : "#111",
-    muted: dark ? "#4a4a4a" : "#9c9890",
-    sub: dark ? "#555" : "#b0ada6",
-    faint: dark ? "#1e1e1e" : "#e0ddd7",
-    inputBorder: dark ? "#2a2a2a" : "#d0cfc9",
-    btnBg: dark ? "#d8d5cf" : "#111",
-    btnTx: dark ? "#111" : "#f7f6f3",
-    rowBg: dark ? "#141414" : "#faf9f7",
-    accent: dark ? "#333" : "#c8c5be",
-    tabActive: dark ? "#d8d5cf" : "#111",
-    tabActiveTx: dark ? "#111" : "#f7f6f3",
+    text: dark ? "#efe9df" : "#1f2937",
+    muted: dark ? "#8d96a0" : "#667085",
+    sub: dark ? "#6d7682" : "#8b94a3",
+    faint: dark ? "#232831" : "#e6dfd4",
+    inputBorder: dark ? "#2a313d" : "#d8d1c7",
+    btnBg: dark ? "#cfd7e2" : "#243b53",
+    btnTx: dark ? "#14171c" : "#fbf8f2",
+    rowBg: dark ? "#15181d" : "#fffdf9",
+    accent: dark ? "#3d4654" : "#d9d1c6",
+    tabActive: dark ? "#cfd7e2" : "#243b53",
+    tabActiveTx: dark ? "#14171c" : "#fbf8f2",
     tabInactive: "transparent",
-    tabBorder: dark ? "#2a2a2a" : "#e0ddd7",
+    tabBorder: dark ? "#2a313d" : "#ded6cb",
+    panelBg: dark ? "#15181d" : "#fffdf9",
+    panelBorder: dark ? "#242a33" : "#e7ded4",
   };
 
   const inputStyle = {
-    background: "transparent", border: "none",
-    borderBottom: `1px solid ${c.inputBorder}`,
-    outline: "none", fontFamily: "'Geist Mono',monospace",
-    fontSize: 12, color: c.text, padding: "3px 0", width: "100%",
-    transition: "border-color 0.15s",
+    background: dark ? "rgba(255,255,255,0.02)" : "#fff",
+    border: `1px solid ${c.inputBorder}`,
+    borderRadius: 14,
+    outline: "none",
+    fontFamily: "Inter, 'Segoe UI', system-ui, sans-serif",
+    fontSize: 13,
+    lineHeight: 1.5,
+    color: c.text,
+    padding: "10px 12px",
+    width: "100%",
+    transition: "border-color 0.15s, box-shadow 0.15s, transform 0.15s, background-color 0.15s",
   };
 
   const save = () => {
@@ -473,16 +622,16 @@ function EditRow({ entry, onSave, onCancel, dark, isDateTaken, onDuplicate }) {
   };
 
   return (
-    <div style={{ padding: "16px 14px 14px", background: c.rowBg, borderBottom: `1px solid ${c.faint}`, borderLeft: `2px solid ${c.accent}` }}>
+    <div style={{ padding: "18px 16px 16px", background: c.rowBg, border: `1px solid ${c.panelBorder}`, borderRadius: 20, boxShadow: dark ? "0 16px 44px rgba(0,0,0,0.22)" : "0 14px 34px rgba(36,40,50,0.06)", borderLeft: `2px solid ${c.accent}` }}>
       {/* Mode tabs */}
-      <div style={{ display: "flex", gap: 0, marginBottom: 16, border: `1px solid ${c.tabBorder}`, width: "fit-content" }}>
+      <div style={{ display: "flex", gap: 0, marginBottom: 16, border: `1px solid ${c.tabBorder}`, width: "fit-content", borderRadius: 999, overflow: "hidden", background: c.panelBg }}>
         {[["manual", "Manual Hours"], ["time", "Time In / Out"]].map(([val, lbl]) => (
           <button key={val} onClick={() => setMode(val)} style={{
             background: mode === val ? c.tabActive : c.tabInactive,
             color: mode === val ? c.tabActiveTx : c.sub,
-            border: "none", padding: "5px 14px", fontSize: 9,
+            border: "none", padding: "8px 16px", fontSize: 9,
             letterSpacing: "0.1em", textTransform: "uppercase",
-            fontFamily: "'Geist Mono',monospace", cursor: "pointer", transition: "all 0.15s",
+            fontFamily: "Inter, 'Segoe UI', system-ui, sans-serif", cursor: "pointer", transition: "all 0.15s",
           }}>{lbl}</button>
         ))}
       </div>
@@ -490,13 +639,13 @@ function EditRow({ entry, onSave, onCancel, dark, isDateTaken, onDuplicate }) {
       {/* Date */}
       <div style={{ marginBottom: 14 }}>
         <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 5, fontFamily: "'Geist Mono',monospace" }}>Date</div>
-        <CalendarField value={eDate} onChange={setEDate} maxDate={todayStr()} dark={dark} compact />
+        <CalendarField value={eDate} onChange={setEDate} maxDate={todayStr()} dark={dark} compact disabledDates={disabledDates} />
       </div>
 
       {dateTaken && (
-        <div style={{ border: `1px solid ${c.faint}`, padding: "12px 12px", marginBottom: 14 }}>
+        <div style={{ border: `1px solid ${c.faint}`, borderRadius: 16, padding: "12px 14px", marginBottom: 14, background: dark ? "rgba(255,255,255,0.03)" : "#faf7f0" }}>
           <div style={{ fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: c.muted, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>Notice</div>
-          <div style={{ fontSize: 11, color: c.sub, fontFamily: "'Geist Mono',monospace", letterSpacing: "0.02em", lineHeight: 1.4 }}>
+          <div style={{ fontSize: 12, color: c.sub, lineHeight: 1.6, letterSpacing: "0.01em" }}>
             This date is already used in History. You can't save a duplicate date. Edit the existing entry instead, or delete it then add a new one.
           </div>
         </div>
@@ -504,7 +653,7 @@ function EditRow({ entry, onSave, onCancel, dark, isDateTaken, onDuplicate }) {
 
       {mode === "manual" ? (
         <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 5, fontFamily: "'Geist Mono',monospace" }}>Hours</div>
+          <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>Hours</div>
           <input type="number" value={eReg} min="0" max="24" step="0.5" style={inputStyle}
             onChange={e => setEReg(e.target.value)}
             onFocus={e => e.target.style.borderColor = c.text}
@@ -514,41 +663,26 @@ function EditRow({ entry, onSave, onCancel, dark, isDateTaken, onDuplicate }) {
             {[4, 6, 7, 8, 9].map(h => <Chip key={h} label={`${h}h`} active={eReg === String(h)} onClick={() => setEReg(String(h))} dark={dark} />)}
           </div>
         </div>
-      ) : mode === "time" ? (
-        <div style={{ marginBottom: 12 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
+      ) : (
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 8, fontFamily: "'Geist Mono',monospace" }}>Time In / Out</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 12, marginBottom: 12 }}>
             <TimePicker value={eIn} onChange={setEIn} dark={dark} label="Time In" />
             <TimePicker value={eOut} onChange={setEOut} dark={dark} label="Time Out" />
           </div>
           {regH > 0 && (
-            <div style={{ fontSize: 11, color: c.muted, fontFamily: "'Geist Mono',monospace" }}>
-              = {regH % 1 === 0 ? regH : regH.toFixed(2)} hrs
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: `1px solid ${c.faint}`, paddingTop: 10, color: c.muted }}>
+              <span style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", fontFamily: "'Geist Mono',monospace" }}>Total Hours</span>
+              <span style={{ fontSize: 12, fontFamily: "Inter, 'Segoe UI', system-ui, sans-serif", letterSpacing: "0.02em" }}>
+                = {regH % 1 === 0 ? regH : regH.toFixed(2)} hrs
+              </span>
             </div>
           )}
-        </div>
-      ) : (
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <div>
-              <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 5, fontFamily: "'Geist Mono',monospace" }}>Regular hours</div>
-              <input type="number" value={eReg} min="0" max="24" step="0.5" style={inputStyle}
-                onChange={e => setEReg(e.target.value)}
-                onFocus={e => e.target.style.borderColor = c.text}
-                onBlur={e => e.target.style.borderColor = c.inputBorder} />
-            </div>
-            <div>
-              <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 5, fontFamily: "'Geist Mono',monospace" }}>OT hours</div>
-              <input type="number" value={eOT} min="-24" max="24" step="0.5" style={inputStyle}
-                onChange={e => setEOT(e.target.value)}
-                onFocus={e => e.target.style.borderColor = c.text}
-                onBlur={e => e.target.style.borderColor = c.inputBorder} />
-            </div>
-          </div>
         </div>
       )}
 
       <div style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 5, fontFamily: "'Geist Mono',monospace" }}>OT hours</div>
+        <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>OT hours</div>
         <input type="number" value={eOT} min="0" max="24" step="0.5" style={inputStyle}
           onChange={e => setEOT(e.target.value)}
           onFocus={e => e.target.style.borderColor = c.text}
@@ -557,7 +691,7 @@ function EditRow({ entry, onSave, onCancel, dark, isDateTaken, onDuplicate }) {
       </div>
 
       <div style={{ marginBottom: 12 }}>
-        <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 5, fontFamily: "'Geist Mono',monospace" }}>Minus hours</div>
+        <div style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>Minus hours</div>
         <input type="number" value={eMinus} min="0" max="24" step="0.5" style={inputStyle}
           onChange={e => setEMinus(e.target.value)}
           onFocus={e => e.target.style.borderColor = c.text}
@@ -566,8 +700,11 @@ function EditRow({ entry, onSave, onCancel, dark, isDateTaken, onDuplicate }) {
       </div>
 
       {derivedH > 0 && (
-        <div style={{ fontSize: 11, color: c.muted, fontFamily: "'Geist Mono',monospace", marginBottom: 12 }}>
-          = {derivedH % 1 === 0 ? derivedH : derivedH.toFixed(2)} hrs
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderTop: `1px solid ${c.faint}`, paddingTop: 10, marginBottom: 12, color: c.muted }}>
+          <span style={{ fontSize: 9, letterSpacing: "0.1em", textTransform: "uppercase", fontFamily: "'Geist Mono',monospace" }}>Total Hours</span>
+          <span style={{ fontSize: 12, fontFamily: "Inter, 'Segoe UI', system-ui, sans-serif", letterSpacing: "0.02em" }}>
+            = {derivedH % 1 === 0 ? derivedH : derivedH.toFixed(2)} hrs
+          </span>
         </div>
       )}
 
@@ -643,6 +780,37 @@ export default function OjtMinimal() {
   const [confirmDelete, setConfirmDelete] = useState(null); // entry object
   const [removing, setRemoving] = useState(null);
   const [dupNotice, setDupNotice] = useState(null); // { title: string, message: string }
+  const [showLogForm, setShowLogForm] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+
+  const handleBulkToggle = () => {
+    setBulkOpen(prev => {
+      const next = !prev;
+      if (next) setEditingId(null);
+      return next;
+    });
+    setBErr("");
+    setErr("");
+  };
+
+  const handleLogToggle = () => {
+    setShowLogForm(prev => {
+      const next = !prev;
+      if (next) {
+        setBulkOpen(false);
+        setEditingId(null);
+      }
+      return next;
+    });
+    setErr("");
+    setBErr("");
+  };
+
+  const startEdit = (id) => {
+    setBulkOpen(false);
+    setShowLogForm(false);
+    setEditingId(id);
+  };
 
   useEffect(() => { try { localStorage.setItem(KEY, JSON.stringify(entries)); } catch {} }, [entries]);
   useEffect(() => {
@@ -730,6 +898,7 @@ export default function OjtMinimal() {
     while (isWeekend(est)) est.setDate(est.getDate() + 1);
     return est;
   };
+
   const eta = estimateCompletion();
 
   const add = () => {
@@ -849,39 +1018,89 @@ export default function OjtMinimal() {
   const sorted = [...entries].sort((a, b) => b.date.localeCompare(a.date));
 
   const c = {
-    text: dark ? "#d8d5cf" : "#111",
-    muted: dark ? "#4a4a4a" : "#9c9890",
-    sub: dark ? "#555" : "#b0ada6",
-    faint: dark ? "#1e1e1e" : "#e0ddd7",
-    inputBorder: dark ? "#2a2a2a" : "#d0cfc9",
-    btnBg: dark ? "#d8d5cf" : "#111",
-    btnTx: dark ? "#111" : "#f7f6f3",
-    panelBg: dark ? "#111" : "#fff",
-    panelBorder: dark ? "#1e1e1e" : "#ece9e3",
-    previewBg: dark ? "#0e0e0e" : "#f7f6f3",
-    tabActive: dark ? "#d8d5cf" : "#111",
-    tabActiveTx: dark ? "#111" : "#f7f6f3",
-    tabBorder: dark ? "#2a2a2a" : "#e0ddd7",
+    text: dark ? "#efe9df" : "#1f2937",
+    muted: dark ? "#8d96a0" : "#667085",
+    sub: dark ? "#6d7682" : "#8b94a3",
+    faint: dark ? "#232831" : "#e6dfd4",
+    inputBorder: dark ? "#2a313d" : "#d8d1c7",
+    btnBg: dark ? "#cfd7e2" : "#243b53",
+    btnTx: dark ? "#14171c" : "#fbf8f2",
+    panelBg: dark ? "#15181d" : "#fffdf9",
+    panelBorder: dark ? "#242a33" : "#e7ded4",
+    previewBg: dark ? "#101317" : "#faf6ef",
+    tabActive: dark ? "#cfd7e2" : "#243b53",
+    tabActiveTx: dark ? "#14171c" : "#fbf8f2",
+    tabBorder: dark ? "#2a313d" : "#ded6cb",
+  };
+
+  const shellStyle = {
+    maxWidth: 760,
+    margin: "0 auto",
+  };
+
+  const surfaceStyle = {
+    background: c.panelBg,
+    border: `1px solid ${c.panelBorder}`,
+    borderRadius: 24,
+    boxShadow: dark ? "0 22px 60px rgba(0,0,0,0.32)" : "0 18px 48px rgba(36,40,50,0.10)",
+  };
+
+  const surfacePaddingStyle = {
+    padding: 24,
+  };
+
+  const displayStyle = {
+    fontFamily: "Inter, 'Segoe UI', system-ui, sans-serif",
+    letterSpacing: "-0.06em",
+    lineHeight: 0.92,
+    color: c.text,
+    fontVariantNumeric: "tabular-nums",
+  };
+
+  const sectionLabelStyle = {
+    fontSize: 11,
+    letterSpacing: "0.12em",
+    textTransform: "uppercase",
+    color: c.sub,
+  };
+
+  const bodyNoteStyle = {
+    fontSize: 13,
+    lineHeight: 1.7,
+    letterSpacing: "0.01em",
+    color: c.sub,
+  };
+
+  const dividerStyle = {
+    height: 1,
+    background: c.faint,
+    margin: "40px 0",
   };
 
   const inputStyle = {
-    background: "transparent", border: "none",
-    borderBottom: `1px solid ${c.inputBorder}`,
-    borderRadius: 0, outline: "none",
-    fontFamily: "'Geist Mono',monospace",
-    fontSize: 13, color: c.text, padding: "6px 0", width: "100%",
-    transition: "border-color 0.15s",
+    background: dark ? "rgba(255,255,255,0.02)" : "#fff",
+    border: `1px solid ${c.inputBorder}`,
+    borderRadius: 16,
+    outline: "none",
+    fontFamily: "Inter, 'Segoe UI', system-ui, sans-serif",
+    fontSize: 15,
+    lineHeight: 1.5,
+    letterSpacing: "0.01em",
+    color: c.text,
+    padding: "12px 14px",
+    width: "100%",
+    transition: "border-color 0.15s, box-shadow 0.15s, transform 0.15s, background-color 0.15s",
   };
 
   const TabBar = ({ value, onChange, options }) => (
-    <div style={{ display: "flex", border: `1px solid ${c.tabBorder}`, width: "fit-content", marginBottom: 20 }}>
+    <div style={{ display: "flex", border: `1px solid ${c.tabBorder}`, width: "fit-content", marginBottom: 20, borderRadius: 999, overflow: "hidden", background: c.panelBg }}>
       {options.map(([val, lbl]) => (
         <button key={val} onClick={() => onChange(val)} style={{
           background: value === val ? c.tabActive : "transparent",
           color: value === val ? c.tabActiveTx : c.sub,
-          border: "none", padding: "6px 16px", fontSize: 10,
+          border: "none", padding: "9px 18px", fontSize: 10,
           letterSpacing: "0.1em", textTransform: "uppercase",
-          fontFamily: "'Geist Mono',monospace", cursor: "pointer", transition: "all 0.15s",
+          fontFamily: "Inter, 'Segoe UI', system-ui, sans-serif", cursor: "pointer", transition: "all 0.15s",
         }}>{lbl}</button>
       ))}
     </div>
@@ -890,14 +1109,14 @@ export default function OjtMinimal() {
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist+Mono:wght@300;400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Geist+Mono:wght@300;400;500&display=swap');
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: 'Geist Mono',monospace; font-size: 13px; -webkit-font-smoothing: antialiased; transition: background 0.25s, color 0.25s; }
-        button { cursor: pointer; font-family: 'Geist Mono',monospace; }
+        body { font-family: Inter, 'Segoe UI', system-ui, sans-serif; font-size: 16px; line-height: 1.6; letter-spacing: 0.01em; -webkit-font-smoothing: antialiased; transition: background 0.25s, color 0.25s; }
+        button { cursor: pointer; font-family: Inter, 'Segoe UI', system-ui, sans-serif; }
         input[type="number"] { -webkit-appearance: none; appearance: none; }
         input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; }
         input::placeholder { color: ${c.sub}; }
-        .log-item { display: flex; align-items: center; justify-content: space-between; padding: 13px 0; border-bottom: 1px solid ${c.faint}; transition: opacity 0.26s; }
+        .log-item { display: flex; align-items: center; justify-content: space-between; padding: 16px 0; border-bottom: 1px solid ${c.faint}; transition: opacity 0.26s; }
         .log-item.out { opacity: 0; }
         .action-btn { background: none; border: none; padding: 0; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: ${c.sub}; transition: color 0.15s; white-space: nowrap; }
         .action-btn:hover { color: ${c.text}; }
@@ -925,14 +1144,14 @@ export default function OjtMinimal() {
         />
       )}
 
-      <div className="wrap" style={{ maxWidth: 560, margin: "0 auto", padding: "72px 32px 120px" }}>
+      <div className="wrap app-shell" style={{ ...shellStyle, padding: "88px 28px 120px" }}>
 
         {/* Top bar */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 60 }}>
-          <span style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: c.muted }}>OJT Progress</span>
+        <div className="app-topbar" style={{ marginBottom: 56 }}>
+          <span className="app-overline" style={{ color: c.muted }}>OJT Progress</span>
           <button onClick={() => setTheme(t => t === "light" ? "dark" : "light")} style={{
             background: "none", border: `1px solid ${c.faint}`, color: c.muted,
-            padding: "5px 14px", fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase",
+            padding: "9px 16px", fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase",
             transition: "all 0.15s",
           }}
             onMouseEnter={e => { e.currentTarget.style.borderColor = c.text; e.currentTarget.style.color = c.text; }}
@@ -941,76 +1160,242 @@ export default function OjtMinimal() {
         </div>
 
         {/* Hero */}
-        <div style={{ marginBottom: 60 }}>
-          <div className="hero-n" style={{ fontFamily: "'Instrument Serif',serif", fontSize: "clamp(80px,18vw,120px)", fontWeight: 400, lineHeight: 0.88, letterSpacing: "-0.02em", color: c.text, fontVariantNumeric: "tabular-nums" }}>
+        <div className="app-hero" style={{ marginBottom: 56 }}>
+          <div className="hero-n app-hero-value" style={displayStyle}>
             {n(total)}
           </div>
-          <div style={{ fontFamily: "'Geist Mono',monospace", fontSize: 13, fontWeight: 300, color: c.muted, marginTop: 12 }}>
+          <div style={{ fontSize: 14, fontWeight: 500, color: c.muted, marginTop: 14, letterSpacing: "0.01em" }}>
             of {GOAL} hours required
           </div>
         </div>
 
         {/* Progress */}
-        <div style={{ marginBottom: 60 }}>
+        <div className="app-surface app-surface--panel" style={{ ...surfaceStyle, ...surfacePaddingStyle, marginBottom: 56 }}>
           <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
-            <span style={{ fontSize: 11, letterSpacing: "0.08em", color: c.muted }}>{pct.toFixed(1)}%</span>
-            <span style={{ fontSize: 11, letterSpacing: "0.05em", color: c.muted }}>{done ? "Complete" : `${n(rem)} remaining`}</span>
+            <span style={sectionLabelStyle}>{pct.toFixed(1)}%</span>
+            <span style={sectionLabelStyle}>{done ? "Complete" : `${n(rem)} remaining`}</span>
           </div>
-          <div style={{ height: 1, background: c.faint, position: "relative" }}>
-            <div style={{ position: "absolute", top: 0, left: 0, height: 1, background: c.text, width: `${pct}%`, transition: "width 0.7s cubic-bezier(0.4,0,0.2,1)" }} />
+          <div style={{ height: 10, background: dark ? "rgba(255,255,255,0.04)" : "#ece6dc", position: "relative", borderRadius: 999, overflow: "hidden" }}>
+            <div style={{ position: "absolute", top: 0, left: 0, height: 10, background: c.btnBg, width: `${pct}%`, transition: "width 0.7s cubic-bezier(0.4,0,0.2,1)", borderRadius: 999 }} />
           </div>
-          <div className="two-col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", borderTop: `1px solid ${c.faint}`, marginTop: 20, paddingTop: 20 }}>
+          <div className="two-col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", borderTop: `1px solid ${c.faint}`, marginTop: 20, paddingTop: 20, gap: 18 }}>
             <div>
-              <div style={{ fontFamily: "'Instrument Serif',serif", fontSize: 28, letterSpacing: "-0.02em", lineHeight: 1, color: c.text, fontVariantNumeric: "tabular-nums" }}>{entries.length}</div>
-              <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginTop: 4 }}>Sessions</div>
+              <div style={{ ...displayStyle, fontSize: 30, fontWeight: 700 }}>{entries.length}</div>
+              <div style={sectionLabelStyle}>Sessions</div>
             </div>
             <div style={{ textAlign: "right" }}>
-              <div style={{ fontFamily: "'Instrument Serif',serif", fontSize: 28, letterSpacing: "-0.02em", lineHeight: 1, color: c.text, fontVariantNumeric: "tabular-nums" }}>
+              <div style={{ ...displayStyle, fontSize: 30, fontWeight: 700 }}>
                 {entries.length > 0 ? n(total / entries.length) : "—"}
               </div>
-              <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginTop: 4 }}>Avg / session</div>
+              <div style={sectionLabelStyle}>Avg / session</div>
             </div>
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", borderTop: `1px solid ${c.faint}`, marginTop: 20, paddingTop: 16 }}>
-            <span style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub }}>Estimated completion</span>
-            <span style={{ fontSize: 11, letterSpacing: "0.04em", color: c.muted, fontFamily: "'Geist Mono',monospace" }}>
+            <span style={sectionLabelStyle}>Estimated completion</span>
+            <span style={{ fontSize: 12, letterSpacing: "0.02em", color: c.muted, fontFamily: "Inter, 'Segoe UI', system-ui, sans-serif" }}>
               {eta
                 ? eta.toLocaleString(undefined, { year: "numeric", month: "short", day: "2-digit", hour: "numeric", minute: "2-digit" })
                 : "—"}
             </span>
           </div>
-          {done && <div style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: c.muted, borderTop: `1px solid ${c.faint}`, paddingTop: 16, marginTop: 20 }}>Requirement fulfilled</div>}
+          {done && <div style={{ ...sectionLabelStyle, borderTop: `1px solid ${c.faint}`, paddingTop: 16, marginTop: 20 }}>Requirement fulfilled</div>}
         </div>
 
-        <div style={{ height: 1, background: c.faint, marginBottom: 40 }} />
+        <div style={dividerStyle} />
 
         {/* Log Entry */}
-        <div style={{ marginBottom: 60 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 24 }}>
-            <div style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: c.muted }}>Log Entry</div>
-            <button onClick={() => { setBulkOpen(o => !o); setBErr(""); }} style={{
-              background: "none", border: "none", padding: 0, fontSize: 11,
-              letterSpacing: "0.08em", textTransform: "uppercase", color: c.sub,
-              textDecoration: "underline", textUnderlineOffset: 3, transition: "color 0.15s",
+        <div className="app-surface app-surface--panel" style={{ ...surfaceStyle, ...surfacePaddingStyle, marginBottom: 56, background: dark ? "#15181d" : "#fffdf9" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 24, gap: 12, flexWrap: "wrap" }}>
+            <div>
+              <div style={sectionLabelStyle}>Log Entry</div>
+              <div style={{ fontSize: 12, lineHeight: 1.6, letterSpacing: "0.01em", color: c.sub, marginTop: 6 }}>
+                {showLogForm ? "Add a clean single log or switch to bulk entry." : "Hidden until you open it."}
+              </div>
+            </div>
+            <button onClick={handleLogToggle} style={{
+              background: showLogForm ? c.btnBg : "transparent", border: `1px solid ${showLogForm ? c.btnBg : c.faint}`, padding: "8px 14px", fontSize: 10,
+              letterSpacing: "0.1em", textTransform: "uppercase", color: showLogForm ? c.btnTx : c.sub,
+              borderRadius: 999, transition: "all 0.15s", fontFamily: "Inter, 'Segoe UI', system-ui, sans-serif",
             }}
-              onMouseEnter={e => e.target.style.color = c.text}
-              onMouseLeave={e => e.target.style.color = c.sub}
-            >{bulkOpen ? "Single entry" : "Bulk add"}</button>
+              onMouseEnter={e => { if (!showLogForm) { e.currentTarget.style.color = c.text; e.currentTarget.style.borderColor = c.text; } }}
+              onMouseLeave={e => { if (!showLogForm) { e.currentTarget.style.color = c.sub; e.currentTarget.style.borderColor = c.faint; } }}
+            >{showLogForm ? "Hide log" : "Add log"}</button>
           </div>
 
-          {!bulkOpen ? (
+          {!showLogForm ? (
+            <div style={{ padding: "14px 0 2px", color: c.sub, fontSize: 12, lineHeight: 1.6, letterSpacing: "0.01em" }}>
+              Tap <span style={{ color: c.text }}>Add log</span> when you need to enter a new session.
+            </div>
+          ) : bulkOpen ? (
             <>
-              <TabBar value={entryMode} onChange={setEntryMode} options={[["manual","Manual Hours"],["time","Time In / Out"]]} />
+              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 14 }}>
+                <button onClick={handleBulkToggle} style={{
+                  background: c.btnBg,
+                  border: `1px solid ${c.btnBg}`,
+                  padding: "8px 14px",
+                  fontSize: 10,
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                  color: c.btnTx,
+                  borderRadius: 999,
+                  transition: "all 0.15s",
+                  fontFamily: "Inter, 'Segoe UI', system-ui, sans-serif",
+                  boxShadow: dark ? "0 10px 24px rgba(0,0,0,0.25)" : "0 10px 22px rgba(36,40,50,0.08)",
+                }}
+                  onMouseEnter={e => { e.currentTarget.style.opacity = "0.9"; }}
+                  onMouseLeave={e => { e.currentTarget.style.opacity = "1"; }}
+                >Bulk add</button>
+              </div>
+
+              <div style={{ marginBottom: 16, padding: 14, border: `1px solid ${c.faint}`, borderRadius: 18, background: dark ? "rgba(255,255,255,0.015)" : "#fff" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, marginBottom: 10, flexWrap: "wrap" }}>
+                  <div>
+                    <div style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: c.muted, fontFamily: "'Geist Mono',monospace" }}>Bulk Add</div>
+                    <div style={{ fontSize: 12, lineHeight: 1.6, letterSpacing: "0.01em", color: c.sub, marginTop: 4 }}>
+                      Add a range of past dates using the same theme as the single entry form.
+                    </div>
+                  </div>
+                  <TabBar value={bMode} onChange={setBMode} options={[['manual','Manual Hours'],['time','Time In / Out']]} />
+                </div>
+
+                <div className="two-col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                  <CalendarField value={bStart} onChange={v => { setBStart(v); if (bEnd && parseLocal(v) > parseLocal(bEnd)) setBEnd(""); }} maxDate={todayStr()} dark={dark} label="Start date" />
+                  <CalendarField value={bEnd} onChange={v => { if (!bStart || parseLocal(v) >= parseLocal(bStart)) { setBEnd(v); setBErr(""); } else setBErr("End must be after start."); }} maxDate={todayStr()} dark={dark} label="End date" />
+                </div>
+              </div>
+
+              {bulkDupCount > 0 && (
+                <div style={{ border: `1px solid ${c.faint}`, padding: "12px 14px", marginBottom: 16, background: c.previewBg, borderRadius: 16 }}>
+                  <div style={{ fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: c.muted, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>Notice</div>
+                  <div style={{ fontSize: 11, color: c.sub, fontFamily: "'Geist Mono',monospace", letterSpacing: "0.02em", lineHeight: 1.4 }}>
+                    {bulkDupCount} date{bulkDupCount === 1 ? " is" : "s are"} already used in History for this range. You can't bulk add duplicates. Edit the existing entries instead, or delete them then add again.
+                  </div>
+                </div>
+              )}
+
+              {bMode === 'manual' ? (
+                <div style={{ marginBottom: 16, padding: 14, border: `1px solid ${c.faint}`, borderRadius: 18, background: dark ? "rgba(255,255,255,0.015)" : "#fff" }}>
+                  <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>Hours per day</div>
+                  <input type="number" placeholder="8" value={bHrs} min="0" max="24" step="0.5"
+                    style={inputStyle}
+                    onChange={e => setBHrs(e.target.value)}
+                    onFocus={e => e.target.style.borderColor = c.text}
+                    onBlur={e => e.target.style.borderColor = c.inputBorder} />
+                  <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
+                    {[4, 6, 7, 8, 9, 10].map(h => <Chip key={h} label={`${h}h`} active={bHrs === String(h)} onClick={() => setBHrs(String(h))} dark={dark} />)}
+                  </div>
+                </div>
+              ) : (
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16, marginBottom: 10 }}>
+                    <TimePicker value={bTimeIn} onChange={setBTimeIn} dark={dark} label="Time In" />
+                    <TimePicker value={bTimeOut} onChange={setBTimeOut} dark={dark} label="Time Out" />
+                  </div>
+                  {bDerivedH > 0 && (
+                    <div style={{ fontSize: 11, color: c.muted, fontFamily: "'Geist Mono',monospace", marginTop: 10 }}>
+                      = {bDerivedH % 1 === 0 ? bDerivedH : bDerivedH.toFixed(2)} hrs / day
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div style={{ marginBottom: 16, padding: 14, border: `1px solid ${c.faint}`, borderRadius: 18, background: dark ? "rgba(255,255,255,0.015)" : "#fff" }}>
+                <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>OT hours / day</div>
+                <input type="number" placeholder="0" value={bOtHrs} min="0" max="24" step="0.5"
+                  style={inputStyle}
+                  onChange={e => setBOtHrs(e.target.value)}
+                  onFocus={e => e.target.style.borderColor = c.text}
+                  onBlur={e => e.target.style.borderColor = c.inputBorder} />
+
+                <div style={{ marginTop: 10 }}>
+                  <div style={{ fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: c.muted, marginBottom: 8, fontFamily: "'Geist Mono',monospace" }}>Apply OT on</div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {BULK_OT_WEEKDAY_OPTIONS.map(([day, label]) => (
+                      <Chip
+                        key={day}
+                        label={label}
+                        active={bOtDays.includes(day)}
+                        onClick={() => setBOtDays(prev => prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day])}
+                        dark={dark}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 16, padding: 14, border: `1px solid ${c.faint}`, borderRadius: 18, background: dark ? "rgba(255,255,255,0.015)" : "#fff" }}>
+                <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>Minus hours / day</div>
+                <input type="number" placeholder="0" value={bMinusHrs} min="0" max="24" step="0.5"
+                  style={inputStyle}
+                  onChange={e => setBMinusHrs(e.target.value)}
+                  onFocus={e => e.target.style.borderColor = c.text}
+                  onBlur={e => e.target.style.borderColor = c.inputBorder} />
+              </div>
+
+              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 11, color: c.sub, letterSpacing: "0.06em", userSelect: "none", marginBottom: 20, paddingLeft: 4 }}>
+                <input type="checkbox" checked={bSkip} onChange={e => setBSkip(e.target.checked)} style={{ accentColor: c.text, width: 13, height: 13 }} />
+                Skip weekends
+              </label>
+
+              {bStart && bEnd && bulkDates.length > 0 && (
+                <div style={{ background: c.previewBg, padding: "12px 14px", marginBottom: 14, borderTop: `1px solid ${c.faint}` }}>
+                  {[['Days', bulkDates.length], ['Hours to add', n(bulkTotal)], ['New total', n(Math.min(GOAL, total + bulkTotal))]].map(([lbl, val]) => (
+                    <div key={lbl} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                      <span style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub }}>{lbl}</span>
+                      <span style={{ fontFamily: "'Instrument Serif',serif", fontSize: 20, color: c.text, fontVariantNumeric: "tabular-nums" }}>{val}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <button onClick={commitBulk} style={{
+                background: bFlash ? (dark ? "#888" : "#555") : c.btnBg,
+                color: c.btnTx, border: "none", padding: "12px 0", width: "100%",
+                fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase",
+                transition: "opacity 0.15s, background 0.2s",
+                borderRadius: 999,
+                boxShadow: dark ? "0 10px 24px rgba(0,0,0,0.22)" : "0 10px 22px rgba(36,40,50,0.08)",
+              }}
+                onMouseEnter={e => !bFlash && (e.currentTarget.style.opacity = "0.75")}
+                onMouseLeave={e => e.currentTarget.style.opacity = "1"}
+              >
+                {bFlash
+                  ? `Added ${bulkDates.length} entries`
+                  : `Add ${bulkDates.length > 0 ? bulkDates.length + " entr" + (bulkDates.length === 1 ? "y" : "ies") : "entries"}`}
+              </button>
+              {bErr && <div style={{ fontSize: 11, color: c.muted, marginTop: 10, letterSpacing: "0.04em" }}>{bErr}</div>}
+            </>
+          ) : (
+            <>
+              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 14 }}>
+                <button onClick={handleBulkToggle} style={{
+                  background: "transparent",
+                  border: `1px solid ${c.faint}`,
+                  padding: "8px 14px",
+                  fontSize: 10,
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                  color: c.sub,
+                  borderRadius: 999,
+                  transition: "all 0.15s",
+                  fontFamily: "Inter, 'Segoe UI', system-ui, sans-serif",
+                }}
+                  onMouseEnter={e => { e.currentTarget.style.color = c.text; e.currentTarget.style.borderColor = c.text; }}
+                  onMouseLeave={e => { e.currentTarget.style.color = c.sub; e.currentTarget.style.borderColor = c.faint; }}
+                >Bulk add</button>
+              </div>
+
+              <TabBar value={entryMode} onChange={setEntryMode} options={[['manual','Manual Hours'],['time','Time In / Out']]} />
 
               {/* Date */}
               <div style={{ marginBottom: 20 }}>
-                <CalendarField value={date} onChange={setDate} maxDate={todayStr()} dark={dark} label="Date" />
+                <CalendarField value={date} onChange={setDate} maxDate={todayStr()} dark={dark} label="Date" disabledDates={usedDates} />
               </div>
 
               {date && usedDates.has(date) && (
-                <div style={{ border: `1px solid ${c.faint}`, padding: "12px 14px", marginBottom: 20 }}>
+                <div style={{ border: `1px solid ${c.faint}`, borderRadius: 16, padding: "14px 16px", marginBottom: 20, background: dark ? "rgba(255,255,255,0.03)" : "#faf7f0" }}>
                   <div style={{ fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: c.muted, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>Notice</div>
-                  <div style={{ fontSize: 11, color: c.sub, fontFamily: "'Geist Mono',monospace", letterSpacing: "0.02em", lineHeight: 1.4 }}>
+                  <div style={bodyNoteStyle}>
                     This date is already used in History. You can't add a duplicate date. Edit the existing entry instead, or delete it then add a new one.
                   </div>
                 </div>
@@ -1091,8 +1476,8 @@ export default function OjtMinimal() {
               )}
 
               <button onClick={add} style={{
-                background: flash ? (dark ? "#888" : "#555") : c.btnBg,
-                color: c.btnTx, border: "none", padding: "10px 28px",
+                background: flash ? (dark ? "#8690a1" : "#39526a") : c.btnBg,
+                color: c.btnTx, border: "none", padding: "11px 20px", borderRadius: 999,
                 fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase",
                 transition: "opacity 0.15s, background 0.2s",
               }}
@@ -1101,117 +1486,6 @@ export default function OjtMinimal() {
               >{flash ? "Added" : "Add"}</button>
               {err && <div style={{ fontSize: 11, color: c.muted, marginTop: 12, letterSpacing: "0.04em" }}>{err}</div>}
             </>
-          ) : (
-            /* Bulk panel */
-            <div style={{ background: c.panelBg, border: `1px solid ${c.panelBorder}`, padding: "20px 18px" }}>
-              <div style={{ fontSize: 10, letterSpacing: "0.12em", textTransform: "uppercase", color: c.sub, marginBottom: 18 }}>Add a range of past dates at once</div>
-
-              <TabBar value={bMode} onChange={setBMode} options={[["manual","Manual Hours"],["time","Time In / Out"]]} />
-
-              <div className="two-col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
-                <CalendarField value={bStart} onChange={v => { setBStart(v); if (bEnd && parseLocal(v) > parseLocal(bEnd)) setBEnd(""); }} maxDate={todayStr()} dark={dark} label="Start date" />
-                <CalendarField value={bEnd} onChange={v => { if (!bStart || parseLocal(v) >= parseLocal(bStart)) { setBEnd(v); setBErr(""); } else setBErr("End must be after start."); }} maxDate={todayStr()} dark={dark} label="End date" />
-              </div>
-
-              {bulkDupCount > 0 && (
-                <div style={{ border: `1px solid ${c.faint}`, padding: "12px 14px", marginBottom: 16, background: c.previewBg }}>
-                  <div style={{ fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: c.muted, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>Notice</div>
-                  <div style={{ fontSize: 11, color: c.sub, fontFamily: "'Geist Mono',monospace", letterSpacing: "0.02em", lineHeight: 1.4 }}>
-                    {bulkDupCount} date{bulkDupCount === 1 ? " is" : "s are"} already used in History for this range. You can't bulk add duplicates. Edit the existing entries instead, or delete them then add again.
-                  </div>
-                </div>
-              )}
-
-              {bMode === "manual" ? (
-                <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>Hours per day</div>
-                  <input type="number" placeholder="8" value={bHrs} min="0" max="24" step="0.5"
-                    style={inputStyle}
-                    onChange={e => setBHrs(e.target.value)}
-                    onFocus={e => e.target.style.borderColor = c.text}
-                    onBlur={e => e.target.style.borderColor = c.inputBorder} />
-                  <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
-                    {[4, 6, 7, 8, 9, 10].map(h => <Chip key={h} label={`${h}h`} active={bHrs === String(h)} onClick={() => setBHrs(String(h))} dark={dark} />)}
-                  </div>
-                </div>
-              ) : (
-                <div style={{ marginBottom: 16 }}>
-                  <div className="two-col" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 10 }}>
-                    <TimePicker value={bTimeIn} onChange={setBTimeIn} dark={dark} label="Time In" />
-                    <TimePicker value={bTimeOut} onChange={setBTimeOut} dark={dark} label="Time Out" />
-                  </div>
-                  {bDerivedH > 0 && (
-                    <div style={{ fontSize: 11, color: c.muted, fontFamily: "'Geist Mono',monospace" }}>
-                      = {bDerivedH % 1 === 0 ? bDerivedH : bDerivedH.toFixed(2)} hrs / day
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>OT hours / day</div>
-                <input type="number" placeholder="0" value={bOtHrs} min="0" max="24" step="0.5"
-                  style={inputStyle}
-                  onChange={e => setBOtHrs(e.target.value)}
-                  onFocus={e => e.target.style.borderColor = c.text}
-                  onBlur={e => e.target.style.borderColor = c.inputBorder} />
-
-                <div style={{ marginTop: 10 }}>
-                  <div style={{ fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase", color: c.muted, marginBottom: 8, fontFamily: "'Geist Mono',monospace" }}>Apply OT on</div>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {BULK_OT_WEEKDAY_OPTIONS.map(([day, label]) => (
-                      <Chip
-                        key={day}
-                        label={label}
-                        active={bOtDays.includes(day)}
-                        onClick={() => setBOtDays(prev => prev.includes(day) ? prev.filter(d => d !== day) : [...prev, day])}
-                        dark={dark}
-                      />
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub, marginBottom: 6, fontFamily: "'Geist Mono',monospace" }}>Minus hours / day</div>
-                <input type="number" placeholder="0" value={bMinusHrs} min="0" max="24" step="0.5"
-                  style={inputStyle}
-                  onChange={e => setBMinusHrs(e.target.value)}
-                  onFocus={e => e.target.style.borderColor = c.text}
-                  onBlur={e => e.target.style.borderColor = c.inputBorder} />
-              </div>
-
-              <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 11, color: c.sub, letterSpacing: "0.06em", userSelect: "none", marginBottom: 20 }}>
-                <input type="checkbox" checked={bSkip} onChange={e => setBSkip(e.target.checked)} style={{ accentColor: c.text, width: 13, height: 13 }} />
-                Skip weekends
-              </label>
-
-              {bStart && bEnd && bulkDates.length > 0 && (
-                <div style={{ background: c.previewBg, padding: "12px 14px", marginBottom: 14, borderTop: `1px solid ${c.faint}` }}>
-                  {[["Days", bulkDates.length], ["Hours to add", n(bulkTotal)], ["New total", n(Math.min(GOAL, total + bulkTotal))]].map(([lbl, val]) => (
-                    <div key={lbl} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
-                      <span style={{ fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase", color: c.sub }}>{lbl}</span>
-                      <span style={{ fontFamily: "'Instrument Serif',serif", fontSize: 20, color: c.text, fontVariantNumeric: "tabular-nums" }}>{val}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <button onClick={commitBulk} style={{
-                background: bFlash ? (dark ? "#888" : "#555") : c.btnBg,
-                color: c.btnTx, border: "none", padding: "10px 0", width: "100%",
-                fontSize: 11, letterSpacing: "0.1em", textTransform: "uppercase",
-                transition: "opacity 0.15s, background 0.2s",
-              }}
-                onMouseEnter={e => !bFlash && (e.currentTarget.style.opacity = "0.75")}
-                onMouseLeave={e => e.currentTarget.style.opacity = "1"}
-              >
-                {bFlash
-                  ? `Added ${bulkDates.length} entries`
-                  : `Add ${bulkDates.length > 0 ? bulkDates.length + " entr" + (bulkDates.length === 1 ? "y" : "ies") : "entries"}`}
-              </button>
-              {bErr && <div style={{ fontSize: 11, color: c.muted, marginTop: 10, letterSpacing: "0.04em" }}>{bErr}</div>}
-            </div>
           )}
         </div>
 
@@ -1219,15 +1493,38 @@ export default function OjtMinimal() {
 
         {/* History */}
         <div>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 24 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
             <div style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: c.muted }}>History</div>
-            {sorted.length > 0 && <span style={{ fontSize: 10, color: c.sub, letterSpacing: "0.06em" }}>{sorted.length} {sorted.length === 1 ? "entry" : "entries"}</span>}
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              {sorted.length > 0 && <span style={{ fontSize: 10, color: c.sub, letterSpacing: "0.06em" }}>{sorted.length} {sorted.length === 1 ? "entry" : "entries"}</span>}
+              <button
+                onClick={() => setShowHistory(v => !v)}
+                style={{
+                  background: showHistory ? c.btnBg : "transparent",
+                  color: showHistory ? c.btnTx : c.sub,
+                  border: `1px solid ${c.faint}`,
+                  borderRadius: 999,
+                  padding: "8px 14px",
+                  fontSize: 10,
+                  letterSpacing: "0.1em",
+                  textTransform: "uppercase",
+                  fontFamily: "Inter, 'Segoe UI', system-ui, sans-serif",
+                  cursor: "pointer",
+                }}
+              >
+                {showHistory ? "Hide log" : "Show log"}
+              </button>
+            </div>
           </div>
 
-          {sorted.length === 0 ? (
+          {!showHistory ? (
+            <div style={{ fontSize: 12, color: c.sub, letterSpacing: "0.04em", padding: "12px 0 6px" }}>
+              The log is hidden until you open it.
+            </div>
+          ) : sorted.length === 0 ? (
             <div style={{ fontSize: 12, color: dark ? "#2e2e2e" : "#c8c5be", letterSpacing: "0.04em", padding: "20px 0" }}>No entries recorded.</div>
           ) : sorted.map(e => (
-            <div key={e.id}>
+            <div key={e.id} style={{ marginBottom: 12 }}>
               {editingId === e.id ? (
                 <EditRow
                   entry={e}
@@ -1236,31 +1533,16 @@ export default function OjtMinimal() {
                   dark={dark}
                   isDateTaken={isDateTaken}
                   onDuplicate={(d) => openDupModal(d, "single")}
+                  disabledDates={new Set(entries.filter(x => x.id !== e.id).map(x => x.date))}
                 />
               ) : (
-                <div className={`log-item${removing === e.id ? " out" : ""}`}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, color: c.text }}>
-                      {fmtDate(e.date)}
-                      <span style={{ fontSize: 10, color: c.sub, marginLeft: 8, letterSpacing: "0.04em" }}>
-                        {fmtWeekday(e.date)}
-                      </span>
-                    </div>
-                    {e.timeIn && e.timeOut && (
-                      <div style={{ fontSize: 10, color: c.sub, fontFamily: "'Geist Mono',monospace", marginTop: 2, letterSpacing: "0.04em" }}>
-                        {fmtTime(e.timeIn)} — {fmtTime(e.timeOut)}
-                      </div>
-                    )}
-                  </div>
-                  <span style={{ fontFamily: "'Instrument Serif',serif", fontSize: 20, color: c.text, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>
-                    {n(entryTotal(e))}<span style={{ fontSize: 10, color: c.sub, letterSpacing: "0.06em", marginLeft: 3 }}>hr</span>
-                  </span>
-                  <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0, marginLeft: 16 }}>
-                    <button className="action-btn" onClick={() => setEditingId(e.id)}>Edit</button>
-                    <div className="log-sep" />
-                    <button className="action-btn danger" onClick={() => setConfirmDelete(e)}>Delete</button>
-                  </div>
-                </div>
+                <LogRow
+                  entry={e}
+                  colors={c}
+                  removing={removing === e.id}
+                  onEdit={startEdit}
+                  onDelete={setConfirmDelete}
+                />
               )}
             </div>
           ))}
