@@ -541,7 +541,6 @@ function GoalModal({ mode, value, onSave, onCancel, dark }) {
     faint: dark ? "#20262f" : "#ede6da",
     btnBg: dark ? "#d9e1eb" : "#243b53",
     btnTx: dark ? "#11161b" : "#fbf8f2",
-    border: dark ? "#2a313d" : "#d8d1c7",
   };
 
   useEffect(() => {
